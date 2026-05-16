@@ -52,6 +52,13 @@
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "621c0730-39a3-4fc4-a7dd-f29e806e823e"
+      }
+    },
+    "owner": "vishnuram18"
   }
 }
