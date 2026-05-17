@@ -18,6 +18,7 @@ interface AppState {
   selectedStock: ScoutCandidate | null;
   alert:         Alert | null;
   userProfile:   UserProfile | null;
+  sessionReady:  boolean;
 
   loadPositions:   () => Promise<void>;
   commitPosition:  (pos: Position) => Promise<void>;
@@ -27,6 +28,7 @@ interface AppState {
   setScoutTab:     (t: ScoutTab) => void;
   dismissAlert:    () => void;
   setUserProfile:  (p: UserProfile | null) => void;
+  setSessionReady: (ready: boolean) => void;
 }
 
 function deriveStatus(pnl: number, current: number, target: number): PositionStatus {
@@ -42,6 +44,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectedStock: null,
   alert:         null,
   userProfile:   null,
+  sessionReady:  false,
 
   loadPositions: async () => {
     const positions = await getAllPositions();
@@ -94,4 +97,5 @@ export const useAppStore = create<AppState>((set, get) => ({
   setScoutTab:      (scoutTab)      => set({ scoutTab }),
   dismissAlert:     ()              => set({ alert: null }),
   setUserProfile:   (userProfile)   => set({ userProfile }),
+  setSessionReady:  (sessionReady)  => set({ sessionReady }),
 }));

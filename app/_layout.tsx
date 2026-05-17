@@ -18,6 +18,7 @@ import { useAppStore } from '../store/useAppStore';
 import { requestPermissions } from '../services/notifications';
 import { liveDayTradeScanner } from '../services/liveDayTradeScanner';
 import { registerDayTradeScanTask } from '../tasks/dayTradeScanTask';
+import { loadPersistedSession } from '../services/authService';
 import 'react-native-reanimated';
 
 SplashScreen.preventAutoHideAsync();
@@ -31,7 +32,9 @@ export default function RootLayout() {
     JetBrainsMono_500Medium,
   });
 
-  const loadPositions = useAppStore(s => s.loadPositions);
+  const loadPositions  = useAppStore(s => s.loadPositions);
+  const setUserProfile = useAppStore(s => s.setUserProfile);
+  const setSessionReady = useAppStore(s => s.setSessionReady);
 
   useEffect(() => {
     if (fontError) throw fontError;
@@ -42,8 +45,14 @@ export default function RootLayout() {
 
     initDatabase()
       .then(loadPositions)
+      .then(async () => {
+        // Auth check happens AFTER DB is ready — no race condition
+        const profile = await loadPersistedSession().catch(() => null);
+        if (profile) setUserProfile(profile);
+      })
       .catch(() => {})
       .finally(() => {
+        setSessionReady(true);
         SplashScreen.hideAsync();
         // Kick off scanner and notifications after DB is ready — fire and forget
         requestPermissions()

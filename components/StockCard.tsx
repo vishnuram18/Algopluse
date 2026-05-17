@@ -143,4 +143,79 @@ function propsAreEqual(prev: Props, next: Props): boolean {
   );
 }
 
+const s = StyleSheet.create({
+  card: {
+    backgroundColor: Colors.raised,
+    borderRadius:    Radii.card,
+    borderWidth:     1,
+    borderColor:     Colors.hair,
+    padding:         Space.base,
+    marginBottom:    Space.sm,
+  },
+  cardPressed: { opacity: 0.85 },
+
+  headRow:  { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: Space.sm },
+  headLeft: { flex: 1, marginRight: Space.sm },
+  tickerRow:{ flexDirection: 'row', alignItems: 'center', gap: Space.xs },
+  ticker:   { fontFamily: Fonts.monoMedium, fontSize: 15, color: Colors.ink },
+  exch:     { fontFamily: Fonts.mono, fontSize: 11, color: Colors.muted2, marginTop: 1 },
+  name:     { fontFamily: Fonts.serif, fontSize: 12, color: Colors.muted, marginTop: 2 },
+
+  badge: {
+    borderWidth:   1,
+    borderRadius:  Radii.sm,
+    paddingHorizontal: Space.sm,
+    paddingVertical:   Space.xs,
+    alignItems:    'center',
+  },
+  badgeLabel: { fontFamily: Fonts.mono, fontSize: 9,  letterSpacing: 0.5 },
+  badgeValue: { fontFamily: Fonts.monoMedium, fontSize: 13, marginTop: 1 },
+
+  priceRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: Space.sm },
+  price:    { fontFamily: Fonts.serifSemiBold, fontSize: 22, color: Colors.ink },
+  priceCur: { fontFamily: Fonts.serif, fontSize: 14, color: Colors.muted },
+
+  changePill: { borderRadius: Radii.xl, paddingHorizontal: Space.sm, paddingVertical: 3 },
+  changeText: { fontFamily: Fonts.monoMedium, fontSize: 12 },
+
+  divider: { height: 1, backgroundColor: Colors.hair, marginBottom: Space.sm },
+
+  scoreRow: { flexDirection: 'row', alignItems: 'center', gap: Space.xs, marginBottom: Space.sm },
+  scorePip: { flexDirection: 'row', alignItems: 'center', gap: 4, flex: 1 },
+  pipDot:       { width: 7, height: 7, borderRadius: 4, backgroundColor: Colors.hairStrong },
+  pipDotPass:   { backgroundColor: Colors.accent },
+  pipLabel:     { fontFamily: Fonts.mono, fontSize: 9, color: Colors.muted2 },
+  pipLabelPass: { color: Colors.accentInk },
+
+  scoreChip: {
+    borderWidth:       1,
+    borderRadius:      Radii.xs,
+    paddingHorizontal: 6,
+    paddingVertical:   2,
+  },
+  scoreChipApproved: { backgroundColor: Colors.accentSoft, borderColor: Colors.accent },
+  scoreChipWatch:    { backgroundColor: Colors.sepiaSoft,  borderColor: Colors.sepia  },
+  scoreChipDeclined: { backgroundColor: Colors.raised,     borderColor: Colors.hairStrong },
+  scoreChipText:     { fontFamily: Fonts.monoMedium, fontSize: 10 },
+
+  verdictBlock: {
+    borderLeftWidth: 2,
+    paddingLeft:     Space.sm,
+    marginBottom:    Space.sm,
+  },
+  verdictHead:    { flexDirection: 'row', alignItems: 'center', gap: Space.xs, marginBottom: 4 },
+  agentDot:       { width: 5, height: 5, borderRadius: 3, backgroundColor: Colors.accent },
+  verdictLabel:   { fontFamily: Fonts.mono, fontSize: 8, color: Colors.muted2, letterSpacing: 0.6, flex: 1 },
+  verdictPill:    { borderWidth: 1, borderRadius: Radii.xs, paddingHorizontal: 6, paddingVertical: 2 },
+  verdictPillText:{ fontFamily: Fonts.monoMedium, fontSize: 10 },
+  verdictBody:    { fontFamily: Fonts.serif, fontSize: 13, color: Colors.inkSoft, lineHeight: 19 },
+
+  foot:          { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: Space.xs },
+  footLabel:     { fontFamily: Fonts.mono, fontSize: 9, color: Colors.muted2, letterSpacing: 0.6 },
+  footRight:     { flexDirection: 'row', alignItems: 'center', gap: Space.xs },
+  exitBadge:     { backgroundColor: Colors.sepiaSoft, borderRadius: Radii.xs, paddingHorizontal: 6, paddingVertical: 2 },
+  exitBadgeText: { fontFamily: Fonts.mono, fontSize: 9, color: Colors.sepia },
+  footArrow:     { fontFamily: Fonts.serifSemiBold, fontSize: 16, color: Colors.muted },
+});
+
 export default React.memo(StockCard, propsAreEqual);

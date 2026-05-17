@@ -24,8 +24,15 @@ export default function PositionCard({ position: p }: Props) {
       `Remove ${p.ticker} from tracking? This confirms you have sold the position on Groww.`,
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Sold — Remove', style: 'destructive',
-          onPress: () => removePosition(p.id) },
+        {
+          text: 'Sold — Remove',
+          style: 'destructive',
+          onPress: () => {
+            removePosition(p.id).catch(() => {
+              Alert.alert('Error', 'Could not remove position. Please try again.');
+            });
+          },
+        },
       ]
     );
   };
