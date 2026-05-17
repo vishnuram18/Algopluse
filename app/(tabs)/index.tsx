@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, ScrollView, Pressable, StyleSheet,
-  ActivityIndicator, SafeAreaView, Alert,
+  ActivityIndicator, SafeAreaView,
 } from 'react-native';
 import { Colors, Fonts, Space, Radii } from '../../theme/tokens';
 import { ScoutCandidate, ScoutTab } from '../../types';
@@ -179,19 +179,13 @@ export default function ScoutScreen() {
       return;
     }
 
-    // Live mode — verify PC server is reachable if a URL is configured
+    // Live mode — if PC URL is set, check reachability first
+    // PC reachable → fetch normally
+    // PC unreachable → phone fetches directly from Yahoo Finance (silent fallback)
     if (pcServerUrl) {
       const up = await checkPcServer(pcServerUrl);
       if (!up) {
-        Alert.alert(
-          'PC Not Reachable',
-          `Could not connect to your PC server at:\n${pcServerUrl}\n\nMake sure your PC is on and the server is running. Switch to Local mode to use your phone's internet instead.`,
-          [
-            { text: 'OK', style: 'cancel' },
-            { text: 'Switch to Local', onPress: () => setMode('CACHED') },
-          ]
-        );
-        return;
+        showToast('PC offline — fetching directly from phone');
       }
     }
 
