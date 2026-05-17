@@ -4,6 +4,7 @@ import * as Notifications   from 'expo-notifications';
 import { initDatabase, getLastSyncAt } from '../services/database';
 import { nseClient }        from '../services/nseDataClient';
 import { runShortTerm }     from '../services/strategyEngine';
+import { marketCalendar }   from '../services/marketCalendarService';
 
 const TASK_NAME = 'ALGOPULSE_DAY_TRADE_SCAN';
 
@@ -67,6 +68,11 @@ TaskManager.defineTask(TASK_NAME, async () => {
 
     // Only act near the three IST checkpoints
     if (!isNearCheckpoint()) {
+      return BackgroundFetch.BackgroundFetchResult.NoData;
+    }
+
+    // Respect holiday / special-trading-day overrides before hitting any APIs
+    if (!await marketCalendar.isMarketOpen()) {
       return BackgroundFetch.BackgroundFetchResult.NoData;
     }
 

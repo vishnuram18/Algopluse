@@ -1,5 +1,5 @@
 import * as SQLite from 'expo-sqlite';
-import { Position, StrategyType, PositionStatus } from '../types';
+import { Position, StrategyType, PositionStatus, CalendarEntry, CalendarEntryType } from '../types';
 
 let db: SQLite.SQLiteDatabase;
 
@@ -34,6 +34,12 @@ export async function initDatabase() {
     CREATE TABLE IF NOT EXISTS app_state (
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS trading_calendar (
+      date   TEXT PRIMARY KEY,   -- YYYY-MM-DD IST
+      type   TEXT NOT NULL,      -- 'HOLIDAY' | 'SPECIAL_TRADING'
+      label  TEXT NOT NULL DEFAULT ''
     );
   `);
 
@@ -110,6 +116,43 @@ export async function saveVerdictCache(
     'INSERT OR REPLACE INTO verdict_cache (ticker, status, body, cached_at) VALUES (?, ?, ?, ?)',
     [ticker, status, body, Date.now()]
   );
+}
+
+// ── Trading calendar ──────────────────────────────────────────────────────────
+
+export async function getTradingCalendarEntry(
+  date: string,
+): Promise<CalendarEntry | null> {
+  const row = await db.getFirstAsync<{ type: string; label: string }>(
+    'SELECT type, label FROM trading_calendar WHERE date = ?',
+    [date]
+  );
+  if (!row) return null;
+  return { date, type: row.type as CalendarEntryType, label: row.label };
+}
+
+export async function upsertTradingCalendarEntry(
+  entry: CalendarEntry,
+): Promise<void> {
+  await db.runAsync(
+    'INSERT OR REPLACE INTO trading_calendar (date, type, label) VALUES (?, ?, ?)',
+    [entry.date, entry.type, entry.label]
+  );
+}
+
+export async function deleteTradingCalendarEntry(date: string): Promise<void> {
+  await db.runAsync('DELETE FROM trading_calendar WHERE date = ?', [date]);
+}
+
+export async function getUpcomingTradingCalendar(
+  fromDate: string,
+  limit = 10,
+): Promise<CalendarEntry[]> {
+  const rows = await db.getAllAsync<{ date: string; type: string; label: string }>(
+    'SELECT date, type, label FROM trading_calendar WHERE date >= ? ORDER BY date ASC LIMIT ?',
+    [fromDate, limit]
+  );
+  return rows.map(r => ({ date: r.date, type: r.type as CalendarEntryType, label: r.label }));
 }
 
 function toPosition(row: Record<string, unknown>): Position {

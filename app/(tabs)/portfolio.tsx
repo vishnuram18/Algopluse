@@ -1,16 +1,37 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, ScrollView, StyleSheet, SafeAreaView, Pressable, Alert } from 'react-native';
 import { Colors, Fonts, Space, Radii } from '../../theme/tokens';
 import { useAppStore } from '../../store/useAppStore';
 import PositionCard from '../../components/PositionCard';
 import AlertBanner from '../../components/AlertBanner';
 import { sendSystemOnline } from '../../services/telegramService';
+import { marketCalendar } from '../../services/marketCalendarService';
+import { CalendarEntry } from '../../types';
 
 export default function PortfolioScreen() {
   const { positions, refreshPrices, alert, dismissAlert } = useAppStore();
-  const [pinging, setPinging] = useState(false);
+  const [pinging,        setPinging]        = useState(false);
+  const [calBusy,        setCalBusy]        = useState(false);
+  const [todayEntry,     setTodayEntry]     = useState<CalendarEntry | null>(null);
+  const [upcoming,       setUpcoming]       = useState<CalendarEntry[]>([]);
+  const [marketOpen,     setMarketOpen]     = useState<boolean | null>(null);
 
   useEffect(() => { if (positions.length > 0) refreshPrices(); }, []);
+
+  const refreshCalendar = useCallback(async () => {
+    try {
+      const [entry, open, next] = await Promise.all([
+        marketCalendar.getTodayEntry(),
+        marketCalendar.isMarketOpen(),
+        marketCalendar.getUpcoming(5),
+      ]);
+      setTodayEntry(entry);
+      setMarketOpen(open);
+      setUpcoming(next);
+    } catch { /* DB may not be ready on very first mount */ }
+  }, []);
+
+  useEffect(() => { refreshCalendar(); }, [refreshCalendar]);
 
   const totalNotional = positions.reduce((a, p) => a + p.current * p.qty, 0);
   const totalEntry    = positions.reduce((a, p) => a + p.entry * p.qty, 0);
@@ -18,6 +39,33 @@ export default function PortfolioScreen() {
     ? Math.round(((totalNotional - totalEntry) / totalEntry) * 10000) / 100
     : 0;
   const fmt = (n: number) => n.toLocaleString('en-IN', { maximumFractionDigits: 0 });
+
+  const handleMarkHoliday = async () => {
+    setCalBusy(true);
+    try {
+      await marketCalendar.markHoliday(marketCalendar.todayIST(), 'Manual override');
+      await refreshCalendar();
+    } catch { Alert.alert('Error', 'Could not update calendar.'); }
+    finally { setCalBusy(false); }
+  };
+
+  const handleMarkSpecial = async () => {
+    setCalBusy(true);
+    try {
+      await marketCalendar.markSpecialTradingDay(marketCalendar.todayIST(), 'Manual override');
+      await refreshCalendar();
+    } catch { Alert.alert('Error', 'Could not update calendar.'); }
+    finally { setCalBusy(false); }
+  };
+
+  const handleClearOverride = async () => {
+    setCalBusy(true);
+    try {
+      await marketCalendar.clearOverride(marketCalendar.todayIST());
+      await refreshCalendar();
+    } catch { Alert.alert('Error', 'Could not update calendar.'); }
+    finally { setCalBusy(false); }
+  };
 
   const handleSystemPing = async () => {
     setPinging(true);
@@ -82,6 +130,78 @@ export default function PortfolioScreen() {
           positions.map(p => <PositionCard key={p.id} position={p} />)
         )}
 
+        {/* ── Market Control panel ─────────────────────────────────────── */}
+        <View style={s.systemCard}>
+          <View style={s.systemRow}>
+            <View style={[s.systemDot, { backgroundColor: marketOpen ? Colors.accent : Colors.sepia }]} />
+            <Text style={s.systemLabel}>MARKET CONTROL</Text>
+            <Text style={s.calStatus}>
+              {marketOpen === null ? '…' : marketOpen ? 'OPEN' : 'CLOSED'}
+            </Text>
+          </View>
+
+          {/* Today override badge */}
+          {todayEntry ? (
+            <View style={s.calBadgeRow}>
+              <View style={[
+                s.calBadge,
+                todayEntry.type === 'HOLIDAY'
+                  ? s.calBadgeHoliday : s.calBadgeSpecial,
+              ]}>
+                <Text style={s.calBadgeText}>
+                  {todayEntry.type === 'HOLIDAY' ? 'HOLIDAY' : 'SPECIAL TRADING'} · {todayEntry.label}
+                </Text>
+              </View>
+              <Pressable
+                style={[s.calClearBtn, calBusy && s.pingBtnDisabled]}
+                onPress={handleClearOverride}
+                disabled={calBusy}
+              >
+                <Text style={s.calClearText}>Clear</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <Text style={s.systemSub}>Today: auto (weekday/weekend rule)</Text>
+          )}
+
+          {/* Action buttons */}
+          <View style={s.calBtnRow}>
+            <Pressable
+              style={[s.calBtn, s.calBtnHoliday, calBusy && s.pingBtnDisabled]}
+              onPress={handleMarkHoliday}
+              disabled={calBusy}
+            >
+              <Text style={s.calBtnText}>Mark Holiday</Text>
+            </Pressable>
+            <Pressable
+              style={[s.calBtn, s.calBtnSpecial, calBusy && s.pingBtnDisabled]}
+              onPress={handleMarkSpecial}
+              disabled={calBusy}
+            >
+              <Text style={[s.calBtnText, { color: Colors.accentInk }]}>Enable Session</Text>
+            </Pressable>
+          </View>
+
+          {/* Upcoming overrides */}
+          {upcoming.length > 0 && (
+            <View style={s.calList}>
+              <Text style={s.calListHead}>UPCOMING OVERRIDES</Text>
+              {upcoming.map(e => (
+                <View key={e.date} style={s.calListRow}>
+                  <Text style={s.calListDate}>{e.date}</Text>
+                  <Text style={[
+                    s.calListType,
+                    e.type === 'HOLIDAY' ? { color: Colors.sepia } : { color: Colors.accentInk },
+                  ]}>
+                    {e.type === 'HOLIDAY' ? 'Holiday' : 'Special'}
+                  </Text>
+                  <Text style={s.calListLabel} numberOfLines={1}>{e.label}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
+
         {/* Telegram integration test */}
         <View style={s.systemCard}>
           <View style={s.systemRow}>
@@ -140,4 +260,30 @@ const s = StyleSheet.create({
                     alignItems: 'center' },
   pingBtnDisabled:{ opacity: 0.45 },
   pingBtnText:    { fontFamily: Fonts.mono, fontSize: 12, color: Colors.canvas },
+
+  // Market control
+  calStatus:      { fontFamily: Fonts.mono, fontSize: 9.5, color: Colors.ink, marginLeft: 'auto',
+                    fontWeight: '600', letterSpacing: 0.6 },
+  calBadgeRow:    { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
+  calBadge:       { flex: 1, borderRadius: Radii.sm, borderWidth: 1, paddingHorizontal: 8,
+                    paddingVertical: 4 },
+  calBadgeHoliday:{ backgroundColor: Colors.sepiaSoft, borderColor: Colors.sepia },
+  calBadgeSpecial:{ backgroundColor: Colors.accentSoft, borderColor: Colors.accent },
+  calBadgeText:   { fontFamily: Fonts.mono, fontSize: 10, color: Colors.ink },
+  calClearBtn:    { paddingHorizontal: 10, paddingVertical: 5, borderRadius: Radii.sm,
+                    borderWidth: 1, borderColor: Colors.hairStrong },
+  calClearText:   { fontFamily: Fonts.mono, fontSize: 10, color: Colors.muted },
+  calBtnRow:      { flexDirection: 'row', gap: 8, marginBottom: 12 },
+  calBtn:         { flex: 1, borderRadius: Radii.sm, borderWidth: 1, paddingVertical: 10,
+                    alignItems: 'center' },
+  calBtnHoliday:  { backgroundColor: Colors.sepiaSoft, borderColor: Colors.sepia },
+  calBtnSpecial:  { backgroundColor: Colors.accentSoft, borderColor: Colors.accent },
+  calBtnText:     { fontFamily: Fonts.mono, fontSize: 11, color: Colors.sepia },
+  calList:        { borderTopWidth: 1, borderColor: Colors.hair, paddingTop: 10, gap: 6 },
+  calListHead:    { fontFamily: Fonts.mono, fontSize: 9, color: Colors.muted2,
+                    textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 4 },
+  calListRow:     { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  calListDate:    { fontFamily: Fonts.mono, fontSize: 10.5, color: Colors.ink, width: 90 },
+  calListType:    { fontFamily: Fonts.mono, fontSize: 10, width: 54 },
+  calListLabel:   { fontFamily: Fonts.mono, fontSize: 10, color: Colors.muted, flex: 1 },
 });

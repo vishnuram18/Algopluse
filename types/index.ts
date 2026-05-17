@@ -1,4 +1,11 @@
-export type StrategyType    = 'SHORT_TERM' | 'LONG_TERM';
+export type StrategyType        = 'SHORT_TERM' | 'LONG_TERM';
+export type CalendarEntryType   = 'HOLIDAY' | 'SPECIAL_TRADING';
+
+export interface CalendarEntry {
+  date:  string;   // YYYY-MM-DD (IST)
+  type:  CalendarEntryType;
+  label: string;
+}
 export type VerdictStatus   = 'APPROVED' | 'WATCH' | 'DECLINED';
 export type VerdictTone     = 'approved' | 'watch' | 'declined';
 export type PositionStatus  = 'Tracking' | 'Near Target' | 'Target hit' | 'Drawdown';

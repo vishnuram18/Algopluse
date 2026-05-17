@@ -2,16 +2,14 @@ import { nseClient, VolumeShocker } from './nseDataClient';
 import { getSentimentCheck }        from './claudeAnalysisService';
 import { sendDayTradeAlert, SignalType } from './telegramService';
 import { setLastSyncAt } from './database';
+import { marketCalendar } from './marketCalendarService';
 
 const CLAUDE_KEY     = process.env.EXPO_PUBLIC_CLAUDE_API_KEY ?? '';
 const SCAN_INTERVAL  = 5 * 60 * 1000;   // 5 minutes
 const COOLDOWN_MS    = 30 * 60 * 1000;  // don't re-alert same ticker within 30 min
 
-// ── NSE market hours (IST = UTC+5:30) ────────────────────────────────────────
-// Pre-open: 9:00 – 9:15 IST → we start scanning at 9:15 (3:45 UTC)
-// Close:    3:30 PM IST     → 10:00 UTC
-const MARKET_OPEN_UTC  = 3 * 60 + 45;   // minutes since midnight UTC
-const MARKET_CLOSE_UTC = 10 * 60;
+// (market-open check delegated to marketCalendar.isMarketOpen() which reads
+//  the trading_calendar DB table for holiday/special-trading overrides)
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -27,15 +25,6 @@ export interface DayTradeSignal {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function isMarketOpen(): boolean {
-  const now    = new Date();
-  const day    = now.getUTCDay();          // 0 = Sun, 6 = Sat
-  if (day === 0 || day === 6) return false;
-
-  const mins = now.getUTCHours() * 60 + now.getUTCMinutes();
-  return mins >= MARKET_OPEN_UTC && mins < MARKET_CLOSE_UTC;
-}
 
 async function fetch15mCloses(ticker: string): Promise<number[]> {
   const url =
@@ -109,7 +98,7 @@ class LiveDayTradeScanner {
    * All I/O is async — the JS thread is never blocked.
    */
   async scanForDayTrades(): Promise<DayTradeSignal[]> {
-    if (!isMarketOpen()) return [];
+    if (!await marketCalendar.isMarketOpen()) return [];
     if (this.scanning) return [];     // prevent overlapping scans
     this.scanning = true;
 
