@@ -1,5 +1,5 @@
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { Stack, useRootNavigationState, router } from 'expo-router';
+import { Stack, router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useFonts } from 'expo-font';
 import {
@@ -34,12 +34,7 @@ export default function RootLayout() {
 
   const loadPositions  = useAppStore(s => s.loadPositions);
   const setUserProfile = useAppStore(s => s.setUserProfile);
-
-  const [authReady,       setAuthReady]       = useState(false);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-
-  // navState.key is set once the navigator has mounted — safe to call router then
-  const navState = useRootNavigationState();
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
     if (fontError) throw fontError;
@@ -57,37 +52,28 @@ export default function RootLayout() {
           liveDayTradeScanner.start();
         }
         const profile = await loadPersistedSession().catch(() => null);
-        if (profile) {
-          setUserProfile(profile);
-          setIsAuthenticated(true);
-        } else {
-          setIsAuthenticated(false);
-        }
-        setAuthReady(true);
+        if (profile) setUserProfile(profile);
+        return profile;
       })
-      .catch(() => {
-        // DB or permissions failed — still show login rather than white screen
-        setAuthReady(true);
-      })
-      .finally(() => SplashScreen.hideAsync());
+      .catch(() => null)
+      .then((profile) => {
+        SplashScreen.hideAsync();
+        setReady(true);
+        // Navigate after the Stack has mounted (next tick)
+        setTimeout(() => {
+          if (!profile) router.replace('/login');
+        }, 0);
+      });
   }, [fontsLoaded]);
 
-  // Once both the navigator is mounted AND auth check is done, redirect if needed
-  useEffect(() => {
-    if (!navState?.key || !authReady) return;
-    if (!isAuthenticated) {
-      router.replace('/login');
-    }
-  }, [navState?.key, authReady, isAuthenticated]);
-
-  if (!fontsLoaded) return null;
+  if (!fontsLoaded || !ready) return null;
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <StatusBar style="dark" backgroundColor="#FBF9F6" translucent={false} />
       <Stack screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="login" />
         <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="login" />
       </Stack>
     </GestureHandlerRootView>
   );
