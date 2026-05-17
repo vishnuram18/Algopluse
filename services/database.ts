@@ -106,6 +106,20 @@ export async function getCandidatesCache(): Promise<{ json: string; cachedAt: nu
 
 // ── Sync timestamp (fail-safe heartbeat) ─────────────────────────────────────
 
+export async function getScanIntervalMins(): Promise<number> {
+  const row = await db.getFirstAsync<{ value: string }>(
+    `SELECT value FROM app_state WHERE key = 'scan_interval_mins'`
+  );
+  return row ? parseInt(row.value, 10) : 0;
+}
+
+export async function setScanIntervalMins(mins: number): Promise<void> {
+  await db.runAsync(
+    `INSERT OR REPLACE INTO app_state (key, value) VALUES ('scan_interval_mins', ?)`,
+    [mins.toString()]
+  );
+}
+
 export async function getLastSyncAt(): Promise<number> {
   const row = await db.getFirstAsync<{ value: string }>(
     `SELECT value FROM app_state WHERE key = 'last_sync_at'`

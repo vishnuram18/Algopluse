@@ -42,7 +42,7 @@ export async function exportBackup(): Promise<void> {
 
   const path = FileSystem.documentDirectory + FILE_NAME;
   await FileSystem.writeAsStringAsync(path, JSON.stringify(payload, null, 2), {
-    encoding: FileSystem.EncodingType.UTF8,
+    encoding: 'utf8',
   });
 
   const canShare = await Sharing.isAvailableAsync();
@@ -73,7 +73,7 @@ export async function importBackup(): Promise<RestoreResult> {
 
   const asset = result.assets[0];
   const raw   = await FileSystem.readAsStringAsync(asset.uri, {
-    encoding: FileSystem.EncodingType.UTF8,
+    encoding: 'utf8',
   });
 
   let payload: BackupPayload;
