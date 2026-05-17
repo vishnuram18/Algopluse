@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
-  View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator, SafeAreaView,
+  View, Text, ScrollView, Pressable, StyleSheet,
+  ActivityIndicator, SafeAreaView,
 } from 'react-native';
 import { Colors, Fonts, Space, Radii } from '../../theme/tokens';
 import { ScoutCandidate, ScoutTab } from '../../types';
@@ -15,26 +16,49 @@ import AlertBanner from '../../components/AlertBanner';
 const CLAUDE_KEY = process.env.EXPO_PUBLIC_CLAUDE_API_KEY ?? '';
 
 export default function ScoutScreen() {
-  const { scoutTab, setScoutTab, selectedStock, setSelectedStock, commitPosition, alert, dismissAlert } = useAppStore();
-  const seed = scoutTab === 'momentum' ? SCOUT_MOMENTUM : SCOUT_VALUE;
+  const {
+    scoutTab, setScoutTab,
+    selectedStock, setSelectedStock,
+    commitPosition,
+    alert, dismissAlert,
+  } = useAppStore();
 
-  const [candidates, setCandidates] = useState<ScoutCandidate[]>(seed);
-  const [loading, setLoading]       = useState(true);
+  const [candidates, setCandidates] = useState<ScoutCandidate[]>(
+    scoutTab === 'momentum' ? SCOUT_MOMENTUM : SCOUT_VALUE
+  );
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Mutable ref so handleCardPress always reads the latest candidates
+  // without being recreated on every render.
+  const candidatesRef = useRef(candidates);
+  candidatesRef.current = candidates;
+
+  // Stable callback — never recreated, safe to pass to React.memo'd cards.
+  const handleCardPress = useCallback((ticker: string) => {
+    const stock = candidatesRef.current.find(c => c.ticker === ticker) ?? null;
+    setSelectedStock(stock);
+  }, [setSelectedStock]);
 
   const loadData = useCallback(async () => {
     const base = scoutTab === 'momentum' ? SCOUT_MOMENTUM : SCOUT_VALUE;
-    setLoading(true);
 
-    // 1. Fetch live prices
+    // Reset to seed immediately so the list is always visible —
+    // no conditional hide that unmounts cards and loses scroll position.
+    setCandidates(base);
+    setRefreshing(true);
+
+    // 1. Fetch live prices for the whole universe in one batch
     const prices = await getBatchPrices(base.map(c => c.ticker)).catch(() => ({}));
-
-    // 2. Merge prices
-    const withPrices = base.map(c => ({ ...c, price: (prices as Record<string,number>)[c.ticker] ?? c.price }));
+    const withPrices = base.map(c => ({
+      ...c,
+      price: (prices as Record<string, number>)[c.ticker] ?? c.price,
+    }));
     setCandidates(withPrices);
-    setLoading(false);
+    setRefreshing(false);
 
-    // 3. Score each stock: RSI, SMA200, P/E vs industry, YoY growth.
-    //    Claude is triggered only for stocks scoring 3+.
+    // 2. Score each stock progressively.
+    //    Each individual setCandidates call only causes cards whose data
+    //    changed to re-render (guarded by React.memo + propsAreEqual).
     const updated = [...withPrices];
     for (let i = 0; i < updated.length; i++) {
       const c = updated[i];
@@ -46,8 +70,8 @@ export default function ScoutScreen() {
           indicator: {
             label: 'RSI 14',
             value: rsi !== null ? rsi.toFixed(1) : '—',
-            tone:  result.breakdown.rsiOversold ? 'accent'
-                 : (rsi !== null && rsi < 50)   ? 'sepia' : 'muted',
+            tone:  result.breakdown.rsiOversold    ? 'accent'
+                 : rsi !== null && rsi < 50        ? 'sepia' : 'muted',
           },
           verdict:      result.verdict,
           score:        result.score,
@@ -56,13 +80,16 @@ export default function ScoutScreen() {
           expectedDays: result.expectedDays ?? undefined,
         };
         setCandidates([...updated]);
-      } catch { /* keep seed data intact */ }
+      } catch { /* keep current card data on error */ }
     }
   }, [scoutTab]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  const approved = candidates.filter(c => c.verdict.status === 'APPROVED').length;
+  const approved = useMemo(
+    () => candidates.filter(c => c.verdict.status === 'APPROVED').length,
+    [candidates]
+  );
 
   return (
     <SafeAreaView style={s.safe}>
@@ -81,14 +108,17 @@ export default function ScoutScreen() {
             <Text style={s.title}>{"Today's\nopportunities"}</Text>
           </View>
           <Pressable style={s.filterBtn} onPress={loadData}>
-            <Text style={s.filterIcon}>⟳</Text>
+            {refreshing
+              ? <ActivityIndicator size="small" color={Colors.muted} />
+              : <Text style={s.filterIcon}>⟳</Text>
+            }
           </Pressable>
         </View>
 
         {/* Meta strip */}
         <View style={s.metaStrip}>
           <View style={s.metaPiece}>
-            <View style={s.metaDot} />
+            <View style={[s.metaDot, refreshing && s.metaDotPulsing]} />
             <Text style={s.metaLabel}>Run</Text>
             <Text style={s.metaValue}>09:15 IST</Text>
           </View>
@@ -122,13 +152,10 @@ export default function ScoutScreen() {
           ))}
         </View>
 
-        {/* Cards */}
-        {loading
-          ? <ActivityIndicator style={{ marginTop: 40 }} color={Colors.accent} />
-          : candidates.map(c => (
-              <StockCard key={c.ticker} data={c} onPress={() => setSelectedStock(c)} />
-            ))
-        }
+        {/* Cards — always rendered; React.memo guards individual re-renders */}
+        {candidates.map(c => (
+          <StockCard key={c.ticker} data={c} onPress={handleCardPress} />
+        ))}
 
         <Text style={s.footnote}>
           Notes by Claude Finance Agent · executions stay manual on Groww.
@@ -151,17 +178,18 @@ const s = StyleSheet.create({
   scroll: { flex: 1, paddingHorizontal: Space.lg },
   header: { flexDirection: 'row', justifyContent: 'space-between',
             alignItems: 'flex-start', paddingTop: Space.base, marginBottom: Space.md },
-  eyebrow:{ fontSize: 10, color: Colors.muted, letterSpacing: 1.4, textTransform: 'uppercase', fontWeight: '500', marginBottom: 4 },
-  title:  { fontFamily: Fonts.serifMedium, fontSize: 26, color: Colors.ink, lineHeight: 32, letterSpacing: -0.5 },
+  eyebrow:   { fontSize: 10, color: Colors.muted, letterSpacing: 1.4, textTransform: 'uppercase', fontWeight: '500', marginBottom: 4 },
+  title:     { fontFamily: Fonts.serifMedium, fontSize: 26, color: Colors.ink, lineHeight: 32, letterSpacing: -0.5 },
   filterBtn: { width: 36, height: 36, borderRadius: Radii.md, borderWidth: 1, borderColor: Colors.hair,
                alignItems: 'center', justifyContent: 'center', marginTop: 28 },
   filterIcon:{ fontSize: 18, color: Colors.muted },
-  metaStrip: { flexDirection: 'row', borderWidth: 1, borderColor: Colors.hair, borderRadius: Radii.md, padding: 10, marginBottom: Space.md },
-  metaPiece: { flex: 1, alignItems: 'center', gap: 2 },
-  metaDot:   { width: 6, height: 6, borderRadius: 3, backgroundColor: Colors.accent },
-  metaLabel: { fontFamily: Fonts.mono, fontSize: 9.5, color: Colors.muted, textTransform: 'uppercase', letterSpacing: 0.8 },
-  metaValue: { fontFamily: Fonts.mono, fontSize: 11, color: Colors.ink },
-  divider:   { width: 1, height: 18, backgroundColor: Colors.hair, alignSelf: 'center' },
+  metaStrip:     { flexDirection: 'row', borderWidth: 1, borderColor: Colors.hair, borderRadius: Radii.md, padding: 10, marginBottom: Space.md },
+  metaPiece:     { flex: 1, alignItems: 'center', gap: 2 },
+  metaDot:       { width: 6, height: 6, borderRadius: 3, backgroundColor: Colors.accent },
+  metaDotPulsing:{ backgroundColor: Colors.sepia },
+  metaLabel:     { fontFamily: Fonts.mono, fontSize: 9.5, color: Colors.muted, textTransform: 'uppercase', letterSpacing: 0.8 },
+  metaValue:     { fontFamily: Fonts.mono, fontSize: 11, color: Colors.ink },
+  divider:       { width: 1, height: 18, backgroundColor: Colors.hair, alignSelf: 'center' },
   segmented:      { flexDirection: 'row', backgroundColor: Colors.raised, borderWidth: 1,
                     borderColor: Colors.hair, borderRadius: Radii.md, padding: 3, marginBottom: Space.base },
   segBtn:         { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',

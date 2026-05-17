@@ -4,8 +4,8 @@ import { Colors, Fonts, Radii, Space } from '../theme/tokens';
 import { ScoutCandidate, ScoreBreakdown } from '../types';
 
 interface Props {
-  data: ScoutCandidate;
-  onPress: () => void;
+  data:    ScoutCandidate;
+  onPress: (ticker: string) => void;  // stable ticker-keyed callback
 }
 
 const VERDICT_COLORS = {
@@ -14,16 +14,27 @@ const VERDICT_COLORS = {
   declined: { text: Colors.muted,     bg: Colors.raised,     border: Colors.hairStrong },
 };
 
-export default function StockCard({ data, onPress }: Props) {
-  const up      = data.change >= 0;
-  const verdict = VERDICT_COLORS[data.verdict.tone];
-  const indToneKey = data.indicator.tone === 'accent' ? 'approved' : data.indicator.tone === 'sepia' ? 'watch' : 'declined';
-  const indTone = VERDICT_COLORS[indToneKey];
-  const fmt     = (n: number) => n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const SCORE_PIPS: { key: keyof ScoreBreakdown; label: string }[] = [
+  { key: 'rsiOversold',    label: 'RSI<35' },
+  { key: 'aboveSma200',    label: 'SMA200' },
+  { key: 'cheapPe',        label: 'P/E'    },
+  { key: 'growthPositive', label: 'Growth' },
+];
+
+// Stable formatter — defined outside the component so it is never recreated
+const fmt = (n: number) =>
+  n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+function StockCard({ data, onPress }: Props) {
+  const up         = data.change >= 0;
+  const verdict    = VERDICT_COLORS[data.verdict.tone];
+  const indToneKey = data.indicator.tone === 'accent' ? 'approved'
+                   : data.indicator.tone === 'sepia'  ? 'watch' : 'declined';
+  const indTone    = VERDICT_COLORS[indToneKey];
 
   return (
     <Pressable
-      onPress={onPress}
+      onPress={() => onPress(data.ticker)}
       style={({ pressed }) => [s.card, pressed && s.cardPressed]}
     >
       {/* Head row */}
@@ -59,14 +70,7 @@ export default function StockCard({ data, onPress }: Props) {
       {/* Score row — visible once analyseStock has run */}
       {data.breakdown && (
         <View style={s.scoreRow}>
-          {(
-            [
-              { key: 'rsiOversold',    label: 'RSI<35'  },
-              { key: 'aboveSma200',    label: 'SMA200'  },
-              { key: 'cheapPe',        label: 'P/E'     },
-              { key: 'growthPositive', label: 'Growth'  },
-            ] as { key: keyof ScoreBreakdown; label: string }[]
-          ).map(({ key, label }) => {
+          {SCORE_PIPS.map(({ key, label }) => {
             const pass = data.breakdown![key];
             return (
               <View key={key} style={s.scorePip}>
@@ -75,14 +79,18 @@ export default function StockCard({ data, onPress }: Props) {
               </View>
             );
           })}
-          <View style={[s.scoreChip,
+          <View style={[
+            s.scoreChip,
             data.score! >= 3 ? s.scoreChipApproved
             : data.score! >= 2 ? s.scoreChipWatch
-            : s.scoreChipDeclined]}>
-            <Text style={[s.scoreChipText,
+            : s.scoreChipDeclined,
+          ]}>
+            <Text style={[
+              s.scoreChipText,
               data.score! >= 3 ? { color: Colors.accentInk }
               : data.score! >= 2 ? { color: Colors.sepia }
-              : { color: Colors.muted }]}>
+              : { color: Colors.muted },
+            ]}>
               {data.score}/4
             </Text>
           </View>
@@ -117,70 +125,22 @@ export default function StockCard({ data, onPress }: Props) {
   );
 }
 
-const s = StyleSheet.create({
-  card: {
-    backgroundColor: Colors.canvas,
-    borderRadius: Radii.card,
-    borderWidth: 1,
-    borderColor: Colors.hair,
-    padding: Space.base,
-    marginBottom: Space.md,
-  },
-  cardPressed: {
-    borderColor: Colors.inkSoft,
-    transform: [{ scale: 0.992 }],
-  },
-  headRow:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-  headLeft:  { flex: 1, marginRight: Space.sm },
-  tickerRow: { flexDirection: 'row', alignItems: 'baseline', gap: Space.sm },
-  ticker:    { fontFamily: Fonts.serifMedium, fontSize: 20, color: Colors.ink, letterSpacing: -0.2 },
-  exch:      { fontFamily: Fonts.mono, fontSize: 9.5, color: Colors.muted, letterSpacing: 1 },
-  name:      { fontSize: 12, color: Colors.muted, marginTop: 2 },
-  badge:     { alignItems: 'flex-end', padding: 5, borderRadius: 4, borderWidth: 1 },
-  badgeLabel:{ fontSize: 8.5, letterSpacing: 1, textTransform: 'uppercase', fontWeight: '500' },
-  badgeValue:{ fontFamily: Fonts.mono, fontSize: 11, marginTop: 1 },
+// Only re-render a card when its visible data actually changes.
+// ticker/name/exchange/currency/sector are immutable — not compared.
+function propsAreEqual(prev: Props, next: Props): boolean {
+  const a = prev.data;
+  const b = next.data;
+  return (
+    prev.onPress       === next.onPress        &&
+    a.price            === b.price             &&
+    a.change           === b.change            &&
+    a.score            === b.score             &&
+    a.expectedDays     === b.expectedDays      &&
+    a.indicator.value  === b.indicator.value   &&
+    a.indicator.tone   === b.indicator.tone    &&
+    a.verdict.status   === b.verdict.status    &&
+    a.verdict.body     === b.verdict.body
+  );
+}
 
-  priceRow:   { flexDirection: 'row', alignItems: 'center', gap: Space.sm, marginTop: Space.sm },
-  price:      { fontFamily: Fonts.mono, fontSize: 14, color: Colors.ink },
-  priceCur:   { color: Colors.muted, fontSize: 12 },
-  changePill: { flexDirection: 'row', paddingHorizontal: 7, paddingVertical: 3, borderRadius: 99 },
-  changeText: { fontFamily: Fonts.mono, fontSize: 11 },
-
-  divider:     { height: 1, backgroundColor: Colors.hair, marginVertical: Space.sm, borderStyle: 'dashed' },
-
-  scoreRow:          { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: Space.sm },
-  scorePip:          { alignItems: 'center', gap: 3 },
-  pipDot:            { width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.hair, borderWidth: 1, borderColor: Colors.hairStrong },
-  pipDotPass:        { backgroundColor: Colors.accent, borderColor: Colors.accent },
-  pipLabel:          { fontFamily: Fonts.mono, fontSize: 8, color: Colors.muted2, letterSpacing: 0.3 },
-  pipLabelPass:      { color: Colors.accentInk },
-  scoreChip:         { marginLeft: 'auto' as any, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 4, borderWidth: 1 },
-  scoreChipApproved: { backgroundColor: Colors.accentSoft, borderColor: Colors.accent },
-  scoreChipWatch:    { backgroundColor: Colors.sepiaSoft,  borderColor: Colors.sepia },
-  scoreChipDeclined: { backgroundColor: Colors.raised,     borderColor: Colors.hairStrong },
-  scoreChipText:     { fontFamily: Fonts.monoMedium, fontSize: 10, fontWeight: '600' },
-
-  verdictBlock: {
-    backgroundColor: Colors.raised,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: Colors.hair,
-    borderLeftWidth: 2,
-    padding: Space.md,
-    marginBottom: Space.sm,
-  },
-  verdictHead:     { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 },
-  agentDot:        { width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.ink },
-  verdictLabel:    { flex: 1, fontSize: 9, color: Colors.muted, letterSpacing: 1.2, textTransform: 'uppercase', fontWeight: '500' },
-  verdictPill:     { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, borderWidth: 1 },
-  verdictPillText: { fontSize: 9, fontWeight: '600', letterSpacing: 0.5 },
-  verdictBody:     { fontFamily: Fonts.serif, fontSize: 12.5, color: Colors.inkSoft, lineHeight: 19 },
-
-  foot:         { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: Space.xs },
-  footLabel:    { fontSize: 10, color: Colors.muted, letterSpacing: 1.2, textTransform: 'uppercase' },
-  footRight:    { flexDirection: 'row', alignItems: 'center', gap: Space.sm },
-  footArrow:    { fontSize: 14, color: Colors.muted },
-  exitBadge:    { backgroundColor: Colors.raised, borderWidth: 1, borderColor: Colors.hairStrong,
-                  borderRadius: Radii.xs, paddingHorizontal: 6, paddingVertical: 2 },
-  exitBadgeText:{ fontFamily: Fonts.mono, fontSize: 9.5, color: Colors.muted },
-});
+export default React.memo(StockCard, propsAreEqual);
