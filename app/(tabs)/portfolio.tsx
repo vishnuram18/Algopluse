@@ -1,12 +1,14 @@
-import React, { useEffect } from 'react';
-import { View, Text, ScrollView, StyleSheet, SafeAreaView, Pressable } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, ScrollView, StyleSheet, SafeAreaView, Pressable, Alert } from 'react-native';
 import { Colors, Fonts, Space, Radii } from '../../theme/tokens';
 import { useAppStore } from '../../store/useAppStore';
 import PositionCard from '../../components/PositionCard';
 import AlertBanner from '../../components/AlertBanner';
+import { sendSystemOnline } from '../../services/telegramService';
 
 export default function PortfolioScreen() {
   const { positions, refreshPrices, alert, dismissAlert } = useAppStore();
+  const [pinging, setPinging] = useState(false);
 
   useEffect(() => { if (positions.length > 0) refreshPrices(); }, []);
 
@@ -16,6 +18,18 @@ export default function PortfolioScreen() {
     ? Math.round(((totalNotional - totalEntry) / totalEntry) * 10000) / 100
     : 0;
   const fmt = (n: number) => n.toLocaleString('en-IN', { maximumFractionDigits: 0 });
+
+  const handleSystemPing = async () => {
+    setPinging(true);
+    try {
+      await sendSystemOnline();
+      Alert.alert('Sent ✓', 'System Online message delivered to Telegram.');
+    } catch {
+      Alert.alert('Failed', 'Could not reach Telegram. Check your bot token and chat ID in .env.');
+    } finally {
+      setPinging(false);
+    }
+  };
 
   return (
     <SafeAreaView style={s.safe}>
@@ -68,6 +82,26 @@ export default function PortfolioScreen() {
           positions.map(p => <PositionCard key={p.id} position={p} />)
         )}
 
+        {/* Telegram integration test */}
+        <View style={s.systemCard}>
+          <View style={s.systemRow}>
+            <View style={s.systemDot} />
+            <Text style={s.systemLabel}>TELEGRAM INTEGRATION</Text>
+          </View>
+          <Text style={s.systemSub}>
+            Sends a test ping to confirm your bot token and chat ID are working.
+          </Text>
+          <Pressable
+            style={[s.pingBtn, pinging && s.pingBtnDisabled]}
+            onPress={handleSystemPing}
+            disabled={pinging}
+          >
+            <Text style={s.pingBtnText}>
+              {pinging ? 'Sending…' : '🚀  Send System Online ping'}
+            </Text>
+          </Pressable>
+        </View>
+
         <View style={{ height: 24 }} />
       </ScrollView>
     </SafeAreaView>
@@ -94,4 +128,16 @@ const s = StyleSheet.create({
   emptyIcon:  { fontSize: 32, color: Colors.hair, marginBottom: Space.md },
   emptyTitle: { fontFamily: Fonts.serif, fontSize: 16, color: Colors.ink, marginBottom: 8 },
   emptySub:   { fontSize: 12, color: Colors.muted, textAlign: 'center', lineHeight: 18 },
+
+  systemCard: { marginTop: Space.xl, borderWidth: 1, borderColor: Colors.hair,
+                borderRadius: Radii.card, padding: Space.base, backgroundColor: Colors.raised },
+  systemRow:  { flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 6 },
+  systemDot:  { width: 6, height: 6, borderRadius: 3, backgroundColor: Colors.accent },
+  systemLabel:{ fontFamily: Fonts.mono, fontSize: 9.5, color: Colors.muted,
+                textTransform: 'uppercase', letterSpacing: 1 },
+  systemSub:  { fontSize: 11.5, color: Colors.muted, lineHeight: 17, marginBottom: Space.md },
+  pingBtn:        { backgroundColor: Colors.ink, borderRadius: Radii.sm, paddingVertical: 11,
+                    alignItems: 'center' },
+  pingBtnDisabled:{ opacity: 0.45 },
+  pingBtnText:    { fontFamily: Fonts.mono, fontSize: 12, color: Colors.canvas },
 });

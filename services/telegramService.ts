@@ -28,6 +28,26 @@ function formatMessage(
   );
 }
 
+export async function sendSystemOnline(): Promise<void> {
+  if (!BOT_TOKEN || !CHAT_ID) {
+    console.warn('[Telegram] BOT_TOKEN or CHAT_ID missing.');
+    return;
+  }
+  const body = JSON.stringify({
+    chat_id:    CHAT_ID,
+    text:
+      '🚀 *AlgoPulse System Online!*\n' +
+      'Ready to track Nifty 50 and NSE Volume Shockers.\n' +
+      '_Short-term RSI scanner + Long-term SMA200 engine active._',
+    parse_mode: 'Markdown',
+  });
+  const res = await fetch(
+    `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }
+  );
+  if (!res.ok) throw new Error(`Telegram ${res.status}`);
+}
+
 export async function sendDayTradeAlert(
   ticker: string,
   signal: SignalType,
