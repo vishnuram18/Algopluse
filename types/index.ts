@@ -33,31 +33,33 @@ export interface ScoreBreakdown {
 }
 
 export interface ScoutCandidate {
-  ticker:    string;
-  name:      string;
-  exchange:  string;
-  price:     number;
-  currency:  string;
-  change:    number;
-  sector:    string;
-  indicator: Indicator;
-  verdict:   Verdict;
-  score?:    number;
-  signals?:  StockSignals;
-  breakdown?: ScoreBreakdown;
+  ticker:       string;
+  name:         string;
+  exchange:     string;
+  price:        number;
+  currency:     string;
+  change:       number;
+  sector:       string;
+  indicator:    Indicator;
+  verdict:      Verdict;
+  score?:       number;
+  signals?:     StockSignals;
+  breakdown?:   ScoreBreakdown;
+  expectedDays?: number;   // ATR-based estimate to reach default target
 }
 
 export interface Position {
-  id: string;
-  ticker: string;
-  name: string;
-  entry: number;
-  current: number;
-  target: number;
-  stopLoss: number;
-  qty: number;
-  opened: string;          // e.g. "May 17"
-  pnl: number;             // percent
-  status: PositionStatus;
+  id:           string;
+  ticker:       string;
+  name:         string;
+  entry:        number;
+  current:      number;
+  target:       number;
+  stopLoss:     number;
+  qty:          number;
+  opened:       string;          // e.g. "May 17"
+  pnl:          number;          // percent
+  status:       PositionStatus;
   strategyType: StrategyType;
+  expectedDays?: number;         // ATR-based sessions to target
 }

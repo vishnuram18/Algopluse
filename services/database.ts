@@ -9,18 +9,19 @@ export async function initDatabase() {
     PRAGMA journal_mode = WAL;
 
     CREATE TABLE IF NOT EXISTS positions (
-      id           TEXT PRIMARY KEY,
-      ticker       TEXT NOT NULL,
-      name         TEXT NOT NULL,
-      entry        REAL NOT NULL,
-      current      REAL NOT NULL,
-      target       REAL NOT NULL,
-      stop_loss    REAL NOT NULL,
-      qty          INTEGER NOT NULL,
-      opened       TEXT NOT NULL,
-      pnl          REAL DEFAULT 0,
-      status       TEXT DEFAULT 'Tracking',
-      strategy_type TEXT NOT NULL
+      id             TEXT PRIMARY KEY,
+      ticker         TEXT NOT NULL,
+      name           TEXT NOT NULL,
+      entry          REAL NOT NULL,
+      current        REAL NOT NULL,
+      target         REAL NOT NULL,
+      stop_loss      REAL NOT NULL,
+      qty            INTEGER NOT NULL,
+      opened         TEXT NOT NULL,
+      pnl            REAL DEFAULT 0,
+      status         TEXT DEFAULT 'Tracking',
+      strategy_type  TEXT NOT NULL,
+      expected_days  INTEGER
     );
 
     CREATE TABLE IF NOT EXISTS verdict_cache (
@@ -29,7 +30,17 @@ export async function initDatabase() {
       body       TEXT NOT NULL,
       cached_at  INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS app_state (
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
   `);
+
+  // Migrate: add expected_days to pre-existing positions tables that lack it
+  await db.execAsync(
+    `ALTER TABLE positions ADD COLUMN expected_days INTEGER;`
+  ).catch(() => {});
 }
 
 export async function getAllPositions(): Promise<Position[]> {
@@ -42,10 +53,11 @@ export async function getAllPositions(): Promise<Position[]> {
 export async function savePosition(pos: Position): Promise<void> {
   await db.runAsync(
     `INSERT OR REPLACE INTO positions
-       (id, ticker, name, entry, current, target, stop_loss, qty, opened, pnl, status, strategy_type)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, ticker, name, entry, current, target, stop_loss, qty, opened, pnl, status, strategy_type, expected_days)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [pos.id, pos.ticker, pos.name, pos.entry, pos.current, pos.target,
-     pos.stopLoss, pos.qty, pos.opened, pos.pnl, pos.status, pos.strategyType]
+     pos.stopLoss, pos.qty, pos.opened, pos.pnl, pos.status, pos.strategyType,
+     pos.expectedDays ?? null]
   );
 }
 
@@ -59,6 +71,22 @@ export async function updatePositionPrice(
   await db.runAsync(
     'UPDATE positions SET current = ?, pnl = ?, status = ? WHERE ticker = ?',
     [price, pnl, status, ticker]
+  );
+}
+
+// ── Sync timestamp (fail-safe heartbeat) ─────────────────────────────────────
+
+export async function getLastSyncAt(): Promise<number> {
+  const row = await db.getFirstAsync<{ value: string }>(
+    `SELECT value FROM app_state WHERE key = 'last_sync_at'`
+  );
+  return row ? parseInt(row.value, 10) : 0;
+}
+
+export async function setLastSyncAt(ts: number): Promise<void> {
+  await db.runAsync(
+    `INSERT OR REPLACE INTO app_state (key, value) VALUES ('last_sync_at', ?)`,
+    [ts.toString()]
   );
 }
 
@@ -98,5 +126,6 @@ function toPosition(row: Record<string, unknown>): Position {
     pnl:          Number(row.pnl),
     status:       String(row.status) as PositionStatus,
     strategyType: String(row.strategy_type) as StrategyType,
+    expectedDays: row.expected_days != null ? Number(row.expected_days) : undefined,
   };
 }

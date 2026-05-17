@@ -104,7 +104,14 @@ export default function StockCard({ data, onPress }: Props) {
       {/* Foot */}
       <View style={s.foot}>
         <Text style={s.footLabel}>TAP TO HANDSHAKE</Text>
-        <Text style={s.footArrow}>→</Text>
+        <View style={s.footRight}>
+          {data.expectedDays != null && (
+            <View style={s.exitBadge}>
+              <Text style={s.exitBadgeText}>Est. exit {data.expectedDays}d</Text>
+            </View>
+          )}
+          <Text style={s.footArrow}>→</Text>
+        </View>
       </View>
     </Pressable>
   );
@@ -169,7 +176,11 @@ const s = StyleSheet.create({
   verdictPillText: { fontSize: 9, fontWeight: '600', letterSpacing: 0.5 },
   verdictBody:     { fontFamily: Fonts.serif, fontSize: 12.5, color: Colors.inkSoft, lineHeight: 19 },
 
-  foot:      { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: Space.xs },
-  footLabel: { fontSize: 10, color: Colors.muted, letterSpacing: 1.2, textTransform: 'uppercase' },
-  footArrow: { fontSize: 14, color: Colors.muted },
+  foot:         { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: Space.xs },
+  footLabel:    { fontSize: 10, color: Colors.muted, letterSpacing: 1.2, textTransform: 'uppercase' },
+  footRight:    { flexDirection: 'row', alignItems: 'center', gap: Space.sm },
+  footArrow:    { fontSize: 14, color: Colors.muted },
+  exitBadge:    { backgroundColor: Colors.raised, borderWidth: 1, borderColor: Colors.hairStrong,
+                  borderRadius: Radii.xs, paddingHorizontal: 6, paddingVertical: 2 },
+  exitBadgeText:{ fontFamily: Fonts.mono, fontSize: 9.5, color: Colors.muted },
 });

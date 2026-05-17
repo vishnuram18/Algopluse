@@ -96,6 +96,11 @@ export default function PositionCard({ position: p }: Props) {
           <Text style={s.edgeLabelTitle}>Entry</Text>
           <Text style={s.edgeLabelPrice}>₹{fmt(p.entry)}</Text>
         </View>
+        {p.expectedDays != null && (
+          <View style={s.exitBadge}>
+            <Text style={s.exitBadgeText}>Est. exit {p.expectedDays}d</Text>
+          </View>
+        )}
         <View style={{ alignItems: 'flex-end' }}>
           <Text style={s.edgeLabelTitle}>Target</Text>
           <Text style={s.edgeLabelPrice}>₹{fmt(p.target)}</Text>
@@ -142,9 +147,12 @@ const s = StyleSheet.create({
   currentLabel:{ position: 'absolute', bottom: 14, left: -20, width: 60,
                  fontFamily: Fonts.mono, fontSize: 9, color: Colors.ink, textAlign: 'center' },
 
-  edgeLabels:     { flexDirection: 'row', justifyContent: 'space-between', marginTop: 2 },
+  edgeLabels:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', marginTop: 2 },
   edgeLabelTitle: { fontFamily: Fonts.mono, fontSize: 9, color: Colors.muted2, textTransform: 'uppercase', letterSpacing: 0.5 },
   edgeLabelPrice: { fontFamily: Fonts.mono, fontSize: 10.5, color: Colors.muted, marginTop: 1 },
+  exitBadge:      { backgroundColor: Colors.raised, borderWidth: 1, borderColor: Colors.hairStrong,
+                    borderRadius: Radii.xs, paddingHorizontal: 6, paddingVertical: 3 },
+  exitBadgeText:  { fontFamily: Fonts.mono, fontSize: 9, color: Colors.muted },
 
   soldBtn:        { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
                     marginTop: Space.md, paddingVertical: Space.sm, paddingHorizontal: Space.md,

@@ -7,6 +7,7 @@ import { Colors, Fonts, Radii, Space } from '../theme/tokens';
 import { ScoutCandidate, StrategyType, Position } from '../types';
 import { getDailyCloses } from '../services/marketData';
 import { getSmartTarget } from '../services/claudeAgent';
+import { calculateExpectedDays } from '../services/atrCalculator';
 
 const CLAUDE_KEY = process.env.EXPO_PUBLIC_CLAUDE_API_KEY ?? '';
 
@@ -65,7 +66,9 @@ export default function HandshakeDrawer({ stock, strategyType, onClose, onCommit
       }
     }
 
-    const opened = new Date().toLocaleDateString('en-IN', { month: 'short', day: '2-digit' });
+    const opened       = new Date().toLocaleDateString('en-IN', { month: 'short', day: '2-digit' });
+    const expectedDays = await calculateExpectedDays(stock.ticker, entry, target).catch(() => null);
+
     const pos: Position = {
       id:           stock.ticker.toLowerCase(),
       ticker:       stock.ticker,
@@ -79,6 +82,7 @@ export default function HandshakeDrawer({ stock, strategyType, onClose, onCommit
       pnl:          0,
       status:       'Tracking',
       strategyType,
+      expectedDays: expectedDays ?? stock.expectedDays,
     };
     onCommit(pos);
     setStep('committed');

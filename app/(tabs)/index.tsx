@@ -49,10 +49,11 @@ export default function ScoutScreen() {
             tone:  result.breakdown.rsiOversold ? 'accent'
                  : (rsi !== null && rsi < 50)   ? 'sepia' : 'muted',
           },
-          verdict:   result.verdict,
-          score:     result.score,
-          signals:   result.signals,
-          breakdown: result.breakdown,
+          verdict:      result.verdict,
+          score:        result.score,
+          signals:      result.signals,
+          breakdown:    result.breakdown,
+          expectedDays: result.expectedDays ?? undefined,
         };
         setCandidates([...updated]);
       } catch { /* keep seed data intact */ }

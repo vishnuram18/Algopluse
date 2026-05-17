@@ -1,6 +1,7 @@
 import { nseClient, VolumeShocker } from './nseDataClient';
 import { getSentimentCheck }        from './claudeAnalysisService';
 import { sendDayTradeAlert, SignalType } from './telegramService';
+import { setLastSyncAt } from './database';
 
 const CLAUDE_KEY     = process.env.EXPO_PUBLIC_CLAUDE_API_KEY ?? '';
 const SCAN_INTERVAL  = 5 * 60 * 1000;   // 5 minutes
@@ -186,6 +187,7 @@ class LiveDayTradeScanner {
     } catch (err) {
       console.warn('[LiveDayTradeScanner] Scan error:', err);
     } finally {
+      setLastSyncAt(Date.now()).catch(() => {});
       this.scanning = false;
     }
 
