@@ -12,6 +12,7 @@ import { useAppStore } from '../../store/useAppStore';
 import StockCard from '../../components/StockCard';
 import HandshakeDrawer from '../../components/HandshakeDrawer';
 import AlertBanner from '../../components/AlertBanner';
+import { useConnectionPulse } from '../../hooks/useConnectionPulse';
 
 const CLAUDE_KEY = process.env.EXPO_PUBLIC_CLAUDE_API_KEY ?? '';
 
@@ -27,6 +28,7 @@ export default function ScoutScreen() {
     scoutTab === 'momentum' ? SCOUT_MOMENTUM : SCOUT_VALUE
   );
   const [refreshing, setRefreshing] = useState(false);
+  const pulse = useConnectionPulse();
 
   // Mutable ref so handleCardPress always reads the latest candidates
   // without being recreated on every render.
@@ -107,12 +109,27 @@ export default function ScoutScreen() {
             <Text style={s.eyebrow}>SCOUTING HUB</Text>
             <Text style={s.title}>{"Today's\nopportunities"}</Text>
           </View>
-          <Pressable style={s.filterBtn} onPress={loadData}>
-            {refreshing
-              ? <ActivityIndicator size="small" color={Colors.muted} />
-              : <Text style={s.filterIcon}>⟳</Text>
-            }
-          </Pressable>
+          <View style={s.headerRight}>
+            {/* Connection pulse dot */}
+            <View style={[
+              s.pulseDot,
+              pulse.isUp === true  && s.pulseDotUp,
+              pulse.isUp === false && s.pulseDotDown,
+            ]} />
+            {pulse.isUp === false && (
+              <Text style={s.pulseOffline}>Offline</Text>
+            )}
+            {/* Reload — also triggers a manual health check */}
+            <Pressable
+              style={s.filterBtn}
+              onPress={() => { loadData(); pulse.check(); }}
+            >
+              {refreshing
+                ? <ActivityIndicator size="small" color={Colors.muted} />
+                : <Text style={s.filterIcon}>⟳</Text>
+              }
+            </Pressable>
+          </View>
         </View>
 
         {/* Meta strip */}
@@ -180,8 +197,13 @@ const s = StyleSheet.create({
             alignItems: 'flex-start', paddingTop: Space.base, marginBottom: Space.md },
   eyebrow:   { fontSize: 10, color: Colors.muted, letterSpacing: 1.4, textTransform: 'uppercase', fontWeight: '500', marginBottom: 4 },
   title:     { fontFamily: Fonts.serifMedium, fontSize: 26, color: Colors.ink, lineHeight: 32, letterSpacing: -0.5 },
+  headerRight:  { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 28 },
+  pulseDot:     { width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.hair },
+  pulseDotUp:   { backgroundColor: '#22c55e' },   // emerald green
+  pulseDotDown: { backgroundColor: '#f87171' },   // coral red
+  pulseOffline: { fontFamily: Fonts.mono, fontSize: 9.5, color: '#f87171', letterSpacing: 0.4 },
   filterBtn: { width: 36, height: 36, borderRadius: Radii.md, borderWidth: 1, borderColor: Colors.hair,
-               alignItems: 'center', justifyContent: 'center', marginTop: 28 },
+               alignItems: 'center', justifyContent: 'center' },
   filterIcon:{ fontSize: 18, color: Colors.muted },
   metaStrip:     { flexDirection: 'row', borderWidth: 1, borderColor: Colors.hair, borderRadius: Radii.md, padding: 10, marginBottom: Space.md },
   metaPiece:     { flex: 1, alignItems: 'center', gap: 2 },
