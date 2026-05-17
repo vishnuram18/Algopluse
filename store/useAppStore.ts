@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { Position, ScoutCandidate, ScoutTab, PositionStatus } from '../types';
-import { getAllPositions, savePosition, updatePositionPrice } from '../services/database';
+import { getAllPositions, savePosition, updatePositionPrice, deletePosition } from '../services/database';
 import { getBatchPrices } from '../services/marketData';
 import { fireTargetNotification, fireStopLossNotification } from '../services/notifications';
 
@@ -14,6 +14,7 @@ interface AppState {
 
   loadPositions:   () => Promise<void>;
   commitPosition:  (pos: Position) => Promise<void>;
+  removePosition:  (id: string) => Promise<void>;
   refreshPrices:   () => Promise<void>;
   setSelectedStock:(s: ScoutCandidate | null) => void;
   setScoutTab:     (t: ScoutTab) => void;
@@ -41,6 +42,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   commitPosition: async (pos) => {
     await savePosition(pos);
     set(s => ({ positions: [pos, ...s.positions.filter(p => p.ticker !== pos.ticker)] }));
+  },
+
+  removePosition: async (id) => {
+    await deletePosition(id);
+    set(s => ({ positions: s.positions.filter(p => p.id !== id) }));
   },
 
   refreshPrices: async () => {

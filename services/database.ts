@@ -49,6 +49,10 @@ export async function savePosition(pos: Position): Promise<void> {
   );
 }
 
+export async function deletePosition(id: string): Promise<void> {
+  await db.runAsync('DELETE FROM positions WHERE id = ?', [id]);
+}
+
 export async function updatePositionPrice(
   ticker: string, price: number, pnl: number, status: string
 ): Promise<void> {

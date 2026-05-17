@@ -16,6 +16,8 @@ import { useEffect } from 'react';
 import { initDatabase } from '../services/database';
 import { useAppStore } from '../store/useAppStore';
 import { requestPermissions } from '../services/notifications';
+import { liveDayTradeScanner } from '../services/liveDayTradeScanner';
+import { registerDayTradeScanTask } from '../tasks/dayTradeScanTask';
 import 'react-native-reanimated';
 
 SplashScreen.preventAutoHideAsync();
@@ -40,6 +42,12 @@ export default function RootLayout() {
       initDatabase()
         .then(loadPositions)
         .then(requestPermissions)
+        .then(granted => {
+          if (granted) {
+            registerDayTradeScanTask().catch(() => {});
+            liveDayTradeScanner.start();
+          }
+        })
         .finally(() => SplashScreen.hideAsync());
     }
   }, [fontsLoaded]);

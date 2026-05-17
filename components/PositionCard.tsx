@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, LayoutChangeEvent } from 'react-native';
+import { View, Text, StyleSheet, LayoutChangeEvent, Pressable, Alert } from 'react-native';
 import { Colors, Fonts, Radii, Space } from '../theme/tokens';
 import { Position, PositionStatus } from '../types';
+import { useAppStore } from '../store/useAppStore';
 
 const STATUS_COLORS: Record<PositionStatus, { text: string; bg: string; dot: string }> = {
   'Tracking':    { text: Colors.muted,     bg: Colors.raised,    dot: Colors.muted     },
@@ -14,7 +15,20 @@ interface Props { position: Position }
 
 export default function PositionCard({ position: p }: Props) {
   const [trackWidth, setTrackWidth] = useState(0);
-  const statusColors = STATUS_COLORS[p.status];
+  const statusColors   = STATUS_COLORS[p.status];
+  const removePosition = useAppStore(s => s.removePosition);
+
+  const handleRemove = () => {
+    Alert.alert(
+      'Mark as Sold',
+      `Remove ${p.ticker} from tracking? This confirms you have sold the position on Groww.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Sold — Remove', style: 'destructive',
+          onPress: () => removePosition(p.id) },
+      ]
+    );
+  };
   const fmt = (n: number) => n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   // Clamp progress to [0, 1]
@@ -87,6 +101,15 @@ export default function PositionCard({ position: p }: Props) {
           <Text style={s.edgeLabelPrice}>₹{fmt(p.target)}</Text>
         </View>
       </View>
+
+      {/* Sold / remove button */}
+      <Pressable
+        style={({ pressed }) => [s.soldBtn, pressed && s.soldBtnPressed]}
+        onPress={handleRemove}
+      >
+        <Text style={s.soldBtnText}>Sold on Groww — Remove</Text>
+        <Text style={s.soldBtnArrow}>✕</Text>
+      </Pressable>
     </View>
   );
 }
@@ -122,4 +145,12 @@ const s = StyleSheet.create({
   edgeLabels:     { flexDirection: 'row', justifyContent: 'space-between', marginTop: 2 },
   edgeLabelTitle: { fontFamily: Fonts.mono, fontSize: 9, color: Colors.muted2, textTransform: 'uppercase', letterSpacing: 0.5 },
   edgeLabelPrice: { fontFamily: Fonts.mono, fontSize: 10.5, color: Colors.muted, marginTop: 1 },
+
+  soldBtn:        { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+                    marginTop: Space.md, paddingVertical: Space.sm, paddingHorizontal: Space.md,
+                    borderWidth: 1, borderColor: Colors.hairStrong, borderRadius: Radii.sm,
+                    backgroundColor: Colors.raised },
+  soldBtnPressed: { backgroundColor: 'rgba(185,64,48,0.06)', borderColor: Colors.danger },
+  soldBtnText:    { fontFamily: Fonts.mono, fontSize: 11, color: Colors.muted },
+  soldBtnArrow:   { fontSize: 11, color: Colors.muted2 },
 });

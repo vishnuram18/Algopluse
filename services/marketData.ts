@@ -3,7 +3,7 @@ const BASE = 'https://query1.finance.yahoo.com/v8/finance/chart';
 const HEADERS = { 'User-Agent': 'Mozilla/5.0' };
 
 async function fetchChart(ticker: string, interval: string, range: string) {
-  const url = `${BASE}/${ticker}.NS?interval=${interval}&range=${range}`;
+  const url = `${BASE}/${encodeURIComponent(ticker)}.NS?interval=${interval}&range=${range}`;
   const res = await fetch(url, { headers: HEADERS });
   if (!res.ok) throw new Error(`Yahoo Finance ${res.status} for ${ticker}`);
   return res.json();

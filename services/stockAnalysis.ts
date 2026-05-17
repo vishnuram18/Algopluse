@@ -48,7 +48,7 @@ function calculateSma(closes: number[], period: number): number | null {
 // ── Data fetchers ─────────────────────────────────────────────────────────────
 
 async function fetchYearlyCloses(ticker: string): Promise<number[]> {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}.NS?interval=1d&range=1y`;
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}.NS?interval=1d&range=1y`;
   const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
   if (!res.ok) return [];
   const data = await res.json();
@@ -65,7 +65,7 @@ interface Fundamentals {
 
 async function fetchFundamentals(ticker: string): Promise<Fundamentals> {
   const url =
-    `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${ticker}.NS` +
+    `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(ticker)}.NS` +
     `?modules=summaryDetail,financialData,assetProfile`;
   const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
   if (!res.ok) return { pe: null, sector: null, yoyGrowth: null };
