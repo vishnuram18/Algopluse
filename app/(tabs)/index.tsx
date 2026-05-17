@@ -150,11 +150,19 @@ export default function ScoutScreen() {
     setCachedAt(now);
   }, [scoutTab, loadFromCache, showToast]);
 
-  // ── Reload button — always tries live first ───────────────────────────────────
+  // ── Reload button — respects current mode ────────────────────────────────────
+  // Sync mode  → fetch live from Yahoo Finance
+  // Local mode → read from SQLite cache (timer handles the background pull)
   const handleReload = useCallback(() => {
     pulse.check();
-    loadLive();
-  }, [pulse, loadLive]);
+    if (mode === 'CACHED') {
+      loadFromCache().then(ok => {
+        if (!ok) showToast('No cache yet — tap Go Live or wait for auto-refresh');
+      });
+    } else {
+      loadLive();
+    }
+  }, [pulse, mode, loadLive, loadFromCache, showToast]);
 
   // ── Auto-refresh interval ─────────────────────────────────────────────────────
   const changeInterval = useCallback(async (mins: number) => {
