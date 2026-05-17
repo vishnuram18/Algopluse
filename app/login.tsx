@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   View, Text, Pressable, StyleSheet, SafeAreaView,
-  ActivityIndicator, Image,
+  ActivityIndicator,
 } from 'react-native';
 import { router } from 'expo-router';
 import { Colors, Fonts, Radii, Space } from '../theme/tokens';
@@ -80,6 +80,10 @@ export default function LoginScreen() {
             )}
           </Pressable>
 
+          <Pressable style={s.skipBtn} onPress={() => router.replace('/(tabs)')}>
+            <Text style={s.skipText}>Skip for now · no Drive backup</Text>
+          </Pressable>
+
           <Text style={s.disclaimer}>
             AlgoPulse only requests access to its own hidden app folder on Drive.
             It cannot read or modify any other files in your Google Drive.
@@ -128,5 +132,8 @@ const s = StyleSheet.create({
                        color: '#4285F4' },           // Google blue
   googleBtnText:     { fontFamily: Fonts.mono, fontSize: 13, color: Colors.ink },
 
+  skipBtn:    { alignItems: 'center', paddingVertical: 6 },
+  skipText:   { fontFamily: Fonts.mono, fontSize: 11, color: Colors.muted2,
+                textDecorationLine: 'underline' },
   disclaimer: { fontSize: 10.5, color: Colors.muted2, lineHeight: 15, textAlign: 'center' },
 });
