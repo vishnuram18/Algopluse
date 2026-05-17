@@ -80,6 +80,30 @@ export async function updatePositionPrice(
   );
 }
 
+// ── Scout candidates cache (Local Mode) ──────────────────────────────────────
+// Stores the full enriched candidates list so the app can render stale-but-useful
+// data when Yahoo Finance / Claude are unreachable.
+
+export async function saveCandidatesCache(json: string): Promise<void> {
+  await db.runAsync(
+    `INSERT OR REPLACE INTO app_state (key, value) VALUES ('candidates_cache', ?)`,
+    [json]
+  );
+  await db.runAsync(
+    `INSERT OR REPLACE INTO app_state (key, value) VALUES ('candidates_cache_at', ?)`,
+    [Date.now().toString()]
+  );
+}
+
+export async function getCandidatesCache(): Promise<{ json: string; cachedAt: number } | null> {
+  const [dataRow, tsRow] = await Promise.all([
+    db.getFirstAsync<{ value: string }>(`SELECT value FROM app_state WHERE key = 'candidates_cache'`),
+    db.getFirstAsync<{ value: string }>(`SELECT value FROM app_state WHERE key = 'candidates_cache_at'`),
+  ]);
+  if (!dataRow) return null;
+  return { json: dataRow.value, cachedAt: tsRow ? parseInt(tsRow.value, 10) : 0 };
+}
+
 // ── Sync timestamp (fail-safe heartbeat) ─────────────────────────────────────
 
 export async function getLastSyncAt(): Promise<number> {

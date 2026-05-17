@@ -8,6 +8,7 @@ import { ScoutCandidate, ScoutTab } from '../../types';
 import { SCOUT_MOMENTUM, SCOUT_VALUE } from '../../data/scoutCandidates';
 import { getBatchPrices } from '../../services/marketData';
 import { analyseStock } from '../../services/stockAnalysis';
+import { saveCandidatesCache, getCandidatesCache } from '../../services/database';
 import { useAppStore } from '../../store/useAppStore';
 import StockCard from '../../components/StockCard';
 import HandshakeDrawer from '../../components/HandshakeDrawer';
@@ -15,6 +16,16 @@ import AlertBanner from '../../components/AlertBanner';
 import { useConnectionPulse } from '../../hooks/useConnectionPulse';
 
 const CLAUDE_KEY = process.env.EXPO_PUBLIC_CLAUDE_API_KEY ?? '';
+
+type DataSourceMode = 'LIVE' | 'CACHED';
+
+function formatAge(cachedAt: number): string {
+  const mins = Math.round((Date.now() - cachedAt) / 60_000);
+  if (mins < 1)  return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  return `${hrs}h ${mins % 60}m ago`;
+}
 
 export default function ScoutScreen() {
   const {
@@ -27,29 +38,52 @@ export default function ScoutScreen() {
   const [candidates, setCandidates] = useState<ScoutCandidate[]>(
     scoutTab === 'momentum' ? SCOUT_MOMENTUM : SCOUT_VALUE
   );
-  const [refreshing, setRefreshing] = useState(false);
+  const [refreshing,  setRefreshing]  = useState(false);
+  const [mode,        setMode]        = useState<DataSourceMode>('LIVE');
+  const [cachedAt,    setCachedAt]    = useState<number | null>(null);
+  const [toast,       setToast]       = useState<string | null>(null);
+
   const pulse = useConnectionPulse();
 
-  // Mutable ref so handleCardPress always reads the latest candidates
-  // without being recreated on every render.
+  // Ref so handleCardPress is always stable
   const candidatesRef = useRef(candidates);
   candidatesRef.current = candidates;
 
-  // Stable callback — never recreated, safe to pass to React.memo'd cards.
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 3000);
+  }, []);
+
   const handleCardPress = useCallback((ticker: string) => {
     const stock = candidatesRef.current.find(c => c.ticker === ticker) ?? null;
     setSelectedStock(stock);
   }, [setSelectedStock]);
 
-  const loadData = useCallback(async () => {
-    const base = scoutTab === 'momentum' ? SCOUT_MOMENTUM : SCOUT_VALUE;
+  // ── Load from SQLite cache ────────────────────────────────────────────────────
+  const loadFromCache = useCallback(async (): Promise<boolean> => {
+    try {
+      const cached = await getCandidatesCache();
+      if (!cached) return false;
+      const parsed: ScoutCandidate[] = JSON.parse(cached.json);
+      // Filter to current tab
+      const base = scoutTab === 'momentum' ? SCOUT_MOMENTUM : SCOUT_VALUE;
+      const baseTickers = new Set(base.map(c => c.ticker));
+      const filtered = parsed.filter(c => baseTickers.has(c.ticker));
+      if (filtered.length === 0) return false;
+      setCandidates(filtered);
+      setCachedAt(cached.cachedAt);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [scoutTab]);
 
-    // Reset to seed immediately so the list is always visible —
-    // no conditional hide that unmounts cards and loses scroll position.
+  // ── Live fetch ────────────────────────────────────────────────────────────────
+  const loadLive = useCallback(async () => {
+    const base = scoutTab === 'momentum' ? SCOUT_MOMENTUM : SCOUT_VALUE;
     setCandidates(base);
     setRefreshing(true);
 
-    // 1. Fetch live prices for the whole universe in one batch
     const prices = await getBatchPrices(base.map(c => c.ticker)).catch(() => ({}));
     const withPrices = base.map(c => ({
       ...c,
@@ -58,9 +92,6 @@ export default function ScoutScreen() {
     setCandidates(withPrices);
     setRefreshing(false);
 
-    // 2. Score each stock progressively.
-    //    Each individual setCandidates call only causes cards whose data
-    //    changed to re-render (guarded by React.memo + propsAreEqual).
     const updated = [...withPrices];
     for (let i = 0; i < updated.length; i++) {
       const c = updated[i];
@@ -82,9 +113,39 @@ export default function ScoutScreen() {
           expectedDays: result.expectedDays ?? undefined,
         };
         setCandidates([...updated]);
-      } catch { /* keep current card data on error */ }
+      } catch { /* keep current card data */ }
     }
+
+    // Persist the full enriched list for Local Mode
+    const now = Date.now();
+    saveCandidatesCache(JSON.stringify(updated)).catch(() => {});
+    setCachedAt(now);
   }, [scoutTab]);
+
+  // ── Main load dispatcher ──────────────────────────────────────────────────────
+  const loadData = useCallback(async () => {
+    if (mode === 'CACHED') {
+      const ok = await loadFromCache();
+      if (!ok) showToast('No cache yet — switching to Live');
+      else     return;
+    }
+    await loadLive();
+  }, [mode, loadFromCache, loadLive, showToast]);
+
+  // ── Reload button handler ─────────────────────────────────────────────────────
+  const handleReload = useCallback(() => {
+    pulse.check();
+
+    if (pulse.isUp === false && mode === 'LIVE') {
+      // Auto-switch to cache and notify
+      setMode('CACHED');
+      showToast('APIs Offline — switching to Local Cache');
+      loadFromCache().catch(() => {});
+      return;
+    }
+
+    loadData();
+  }, [pulse, mode, loadData, loadFromCache, showToast]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -92,6 +153,8 @@ export default function ScoutScreen() {
     () => candidates.filter(c => c.verdict.status === 'APPROVED').length,
     [candidates]
   );
+
+  const isCached = mode === 'CACHED';
 
   return (
     <SafeAreaView style={s.safe}>
@@ -102,6 +165,13 @@ export default function ScoutScreen() {
         />
       )}
 
+      {/* Toast notification */}
+      {toast && (
+        <View style={s.toast}>
+          <Text style={s.toastText}>{toast}</Text>
+        </View>
+      )}
+
       <ScrollView style={s.scroll} showsVerticalScrollIndicator={false}>
         {/* Header */}
         <View style={s.header}>
@@ -110,7 +180,7 @@ export default function ScoutScreen() {
             <Text style={s.title}>{"Today's\nopportunities"}</Text>
           </View>
           <View style={s.headerRight}>
-            {/* Connection pulse dot */}
+            {/* Pulse dot */}
             <View style={[
               s.pulseDot,
               pulse.isUp === true  && s.pulseDotUp,
@@ -119,11 +189,20 @@ export default function ScoutScreen() {
             {pulse.isUp === false && (
               <Text style={s.pulseOffline}>Offline</Text>
             )}
-            {/* Reload — also triggers a manual health check */}
+            {/* Source toggle */}
             <Pressable
-              style={s.filterBtn}
-              onPress={() => { loadData(); pulse.check(); }}
+              style={[s.modeToggle, isCached && s.modeToggleCached]}
+              onPress={() => {
+                const next: DataSourceMode = isCached ? 'LIVE' : 'CACHED';
+                setMode(next);
+              }}
             >
+              <Text style={[s.modeToggleText, isCached && s.modeToggleTextCached]}>
+                {isCached ? 'Local' : 'Sync'}
+              </Text>
+            </Pressable>
+            {/* Reload */}
+            <Pressable style={s.filterBtn} onPress={handleReload}>
               {refreshing
                 ? <ActivityIndicator size="small" color={Colors.muted} />
                 : <Text style={s.filterIcon}>⟳</Text>
@@ -132,22 +211,36 @@ export default function ScoutScreen() {
           </View>
         </View>
 
-        {/* Meta strip */}
-        <View style={s.metaStrip}>
+        {/* Cached data banner */}
+        {isCached && (
+          <View style={s.cacheBanner}>
+            <Text style={s.cacheBannerText}>
+              {cachedAt
+                ? `Local cache · saved ${formatAge(cachedAt)}`
+                : 'Local cache · no data yet'}
+            </Text>
+            <Pressable onPress={() => { setMode('LIVE'); loadLive(); }}>
+              <Text style={s.cacheBannerRefresh}>Go Live</Text>
+            </Pressable>
+          </View>
+        )}
+
+        {/* Meta strip — sepia tint in cached mode */}
+        <View style={[s.metaStrip, isCached && s.metaStripCached]}>
           <View style={s.metaPiece}>
             <View style={[s.metaDot, refreshing && s.metaDotPulsing]} />
             <Text style={s.metaLabel}>Run</Text>
-            <Text style={s.metaValue}>09:15 IST</Text>
+            <Text style={[s.metaValue, isCached && s.metaValueCached]}>09:15 IST</Text>
           </View>
           <View style={s.divider} />
           <View style={s.metaPiece}>
             <Text style={s.metaLabel}>Universe</Text>
-            <Text style={s.metaValue}>NIFTY 500</Text>
+            <Text style={[s.metaValue, isCached && s.metaValueCached]}>NIFTY 500</Text>
           </View>
           <View style={s.divider} />
           <View style={s.metaPiece}>
             <Text style={s.metaLabel}>Cleared</Text>
-            <Text style={s.metaValue}>{approved}/{candidates.length}</Text>
+            <Text style={[s.metaValue, isCached && s.metaValueCached]}>{approved}/{candidates.length}</Text>
           </View>
         </View>
 
@@ -169,7 +262,6 @@ export default function ScoutScreen() {
           ))}
         </View>
 
-        {/* Cards — always rendered; React.memo guards individual re-renders */}
         {candidates.map(c => (
           <StockCard key={c.ticker} data={c} onPress={handleCardPress} />
         ))}
@@ -193,25 +285,54 @@ export default function ScoutScreen() {
 const s = StyleSheet.create({
   safe:   { flex: 1, backgroundColor: Colors.canvas },
   scroll: { flex: 1, paddingHorizontal: Space.lg },
-  header: { flexDirection: 'row', justifyContent: 'space-between',
-            alignItems: 'flex-start', paddingTop: Space.base, marginBottom: Space.md },
+
+  // Toast
+  toast:     { position: 'absolute', top: 56, left: 20, right: 20, zIndex: 99,
+               backgroundColor: Colors.ink, borderRadius: Radii.md,
+               paddingHorizontal: 14, paddingVertical: 9, alignItems: 'center' },
+  toastText: { fontFamily: Fonts.mono, fontSize: 11.5, color: Colors.canvas },
+
+  // Header
+  header:    { flexDirection: 'row', justifyContent: 'space-between',
+               alignItems: 'flex-start', paddingTop: Space.base, marginBottom: Space.md },
   eyebrow:   { fontSize: 10, color: Colors.muted, letterSpacing: 1.4, textTransform: 'uppercase', fontWeight: '500', marginBottom: 4 },
   title:     { fontFamily: Fonts.serifMedium, fontSize: 26, color: Colors.ink, lineHeight: 32, letterSpacing: -0.5 },
-  headerRight:  { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 28 },
-  pulseDot:     { width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.hair },
-  pulseDotUp:   { backgroundColor: '#22c55e' },   // emerald green
-  pulseDotDown: { backgroundColor: '#f87171' },   // coral red
-  pulseOffline: { fontFamily: Fonts.mono, fontSize: 9.5, color: '#f87171', letterSpacing: 0.4 },
+  headerRight:     { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 28 },
+  pulseDot:        { width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.hair },
+  pulseDotUp:      { backgroundColor: '#22c55e' },
+  pulseDotDown:    { backgroundColor: '#f87171' },
+  pulseOffline:    { fontFamily: Fonts.mono, fontSize: 9.5, color: '#f87171', letterSpacing: 0.4 },
+  modeToggle:      { paddingHorizontal: 8, paddingVertical: 4, borderRadius: Radii.sm,
+                     borderWidth: 1, borderColor: Colors.hairStrong,
+                     backgroundColor: Colors.raised },
+  modeToggleCached:{ backgroundColor: Colors.sepiaSoft, borderColor: Colors.sepia },
+  modeToggleText:      { fontFamily: Fonts.mono, fontSize: 9.5, color: Colors.muted },
+  modeToggleTextCached:{ color: Colors.sepia },
   filterBtn: { width: 36, height: 36, borderRadius: Radii.md, borderWidth: 1, borderColor: Colors.hair,
                alignItems: 'center', justifyContent: 'center' },
   filterIcon:{ fontSize: 18, color: Colors.muted },
-  metaStrip:     { flexDirection: 'row', borderWidth: 1, borderColor: Colors.hair, borderRadius: Radii.md, padding: 10, marginBottom: Space.md },
-  metaPiece:     { flex: 1, alignItems: 'center', gap: 2 },
-  metaDot:       { width: 6, height: 6, borderRadius: 3, backgroundColor: Colors.accent },
-  metaDotPulsing:{ backgroundColor: Colors.sepia },
-  metaLabel:     { fontFamily: Fonts.mono, fontSize: 9.5, color: Colors.muted, textTransform: 'uppercase', letterSpacing: 0.8 },
-  metaValue:     { fontFamily: Fonts.mono, fontSize: 11, color: Colors.ink },
-  divider:       { width: 1, height: 18, backgroundColor: Colors.hair, alignSelf: 'center' },
+
+  // Cached data banner
+  cacheBanner:       { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+                       backgroundColor: Colors.sepiaSoft, borderWidth: 1, borderColor: Colors.sepia,
+                       borderRadius: Radii.sm, paddingHorizontal: 12, paddingVertical: 7,
+                       marginBottom: Space.sm },
+  cacheBannerText:   { fontFamily: Fonts.mono, fontSize: 10.5, color: Colors.sepia },
+  cacheBannerRefresh:{ fontFamily: Fonts.mono, fontSize: 10.5, color: Colors.sepia, fontWeight: '600',
+                       textDecorationLine: 'underline' },
+
+  // Meta strip
+  metaStrip:      { flexDirection: 'row', borderWidth: 1, borderColor: Colors.hair, borderRadius: Radii.md, padding: 10, marginBottom: Space.md },
+  metaStripCached:{ borderColor: Colors.sepia, backgroundColor: Colors.sepiaSoft },
+  metaPiece:      { flex: 1, alignItems: 'center', gap: 2 },
+  metaDot:        { width: 6, height: 6, borderRadius: 3, backgroundColor: Colors.accent },
+  metaDotPulsing: { backgroundColor: Colors.sepia },
+  metaLabel:      { fontFamily: Fonts.mono, fontSize: 9.5, color: Colors.muted, textTransform: 'uppercase', letterSpacing: 0.8 },
+  metaValue:      { fontFamily: Fonts.mono, fontSize: 11, color: Colors.ink },
+  metaValueCached:{ color: Colors.sepia },
+  divider:        { width: 1, height: 18, backgroundColor: Colors.hair, alignSelf: 'center' },
+
+  // Segmented control
   segmented:      { flexDirection: 'row', backgroundColor: Colors.raised, borderWidth: 1,
                     borderColor: Colors.hair, borderRadius: Radii.md, padding: 3, marginBottom: Space.base },
   segBtn:         { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
@@ -220,5 +341,6 @@ const s = StyleSheet.create({
   segLabel:       { fontFamily: Fonts.mono, fontSize: 12, color: Colors.muted },
   segLabelActive: { color: Colors.ink, fontWeight: '500' },
   segCount:       { fontFamily: Fonts.mono, fontSize: 10, color: Colors.muted2 },
+
   footnote: { fontFamily: Fonts.mono, fontSize: 10.5, color: Colors.muted2, textAlign: 'center', marginTop: Space.sm },
 });
