@@ -1,5 +1,5 @@
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { Stack, Redirect } from 'expo-router';
+import { Stack, useRootNavigationState, router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useFonts } from 'expo-font';
 import {
@@ -35,9 +35,11 @@ export default function RootLayout() {
   const loadPositions  = useAppStore(s => s.loadPositions);
   const setUserProfile = useAppStore(s => s.setUserProfile);
 
-  // null = still checking, true/false = resolved
-  const [authReady,        setAuthReady]        = useState(false);
-  const [isAuthenticated,  setIsAuthenticated]  = useState(false);
+  const [authReady,       setAuthReady]       = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+
+  // navState.key is set once the navigator has mounted — safe to call router then
+  const navState = useRootNavigationState();
 
   useEffect(() => {
     if (fontError) throw fontError;
@@ -54,7 +56,6 @@ export default function RootLayout() {
           registerDayTradeScanTask().catch(() => {});
           liveDayTradeScanner.start();
         }
-        // Check for a persisted Google session
         const profile = await loadPersistedSession().catch(() => null);
         if (profile) {
           setUserProfile(profile);
@@ -64,10 +65,22 @@ export default function RootLayout() {
         }
         setAuthReady(true);
       })
+      .catch(() => {
+        // DB or permissions failed — still show login rather than white screen
+        setAuthReady(true);
+      })
       .finally(() => SplashScreen.hideAsync());
   }, [fontsLoaded]);
 
-  if (!fontsLoaded || !authReady) return null;
+  // Once both the navigator is mounted AND auth check is done, redirect if needed
+  useEffect(() => {
+    if (!navState?.key || !authReady) return;
+    if (!isAuthenticated) {
+      router.replace('/login');
+    }
+  }, [navState?.key, authReady, isAuthenticated]);
+
+  if (!fontsLoaded) return null;
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
@@ -76,8 +89,6 @@ export default function RootLayout() {
         <Stack.Screen name="login" />
         <Stack.Screen name="(tabs)" />
       </Stack>
-      {/* Redirect based on auth state after initial load */}
-      {!isAuthenticated && <Redirect href="/login" />}
     </GestureHandlerRootView>
   );
 }
