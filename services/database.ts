@@ -168,6 +168,13 @@ export async function deleteTradingCalendarEntry(date: string): Promise<void> {
   await db.runAsync('DELETE FROM trading_calendar WHERE date = ?', [date]);
 }
 
+export async function getAllCalendarEntries(): Promise<CalendarEntry[]> {
+  const rows = await db.getAllAsync<{ date: string; type: string; label: string }>(
+    'SELECT date, type, label FROM trading_calendar ORDER BY date ASC'
+  );
+  return rows.map(r => ({ date: r.date, type: r.type as CalendarEntryType, label: r.label }));
+}
+
 export async function getUpcomingTradingCalendar(
   fromDate: string,
   limit = 10,

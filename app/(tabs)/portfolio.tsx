@@ -7,7 +7,7 @@ import AlertBanner from '../../components/AlertBanner';
 import { sendSystemOnline } from '../../services/telegramService';
 import { marketCalendar } from '../../services/marketCalendarService';
 import { signOut as googleSignOut } from '../../services/authService';
-import { backupToDrive, restoreFromDrive } from '../../services/driveBackupService';
+import { exportBackup, importBackup } from '../../services/localBackupService';
 import { CalendarEntry } from '../../types';
 import UserAvatar from '../../components/UserAvatar';
 import { router } from 'expo-router';
@@ -55,36 +55,27 @@ export default function PortfolioScreen() {
   const handleBackup = async () => {
     setDriveBusy(true);
     try {
-      await backupToDrive();
-      Alert.alert('Backed up ✓', 'sync_backup.json saved to your Drive appDataFolder.');
+      await exportBackup();
     } catch (e: unknown) {
-      Alert.alert('Backup failed', e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg !== 'cancelled') Alert.alert('Export failed', msg);
     } finally {
       setDriveBusy(false);
     }
   };
 
   const handleRestore = async () => {
-    Alert.alert(
-      'Restore from Cloud?',
-      'This will merge Drive backup data into your local database. Existing positions are kept.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Restore', onPress: async () => {
-            setDriveBusy(true);
-            try {
-              const result = await restoreFromDrive();
-              await refreshPrices();
-              Alert.alert('Restored ✓', result.message);
-            } catch (e: unknown) {
-              Alert.alert('Restore failed', e instanceof Error ? e.message : String(e));
-            } finally {
-              setDriveBusy(false);
-            }
-          },
-        },
-      ]
-    );
+    setDriveBusy(true);
+    try {
+      const result = await importBackup();
+      await refreshPrices();
+      Alert.alert('Restored ✓', result.message);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg !== 'cancelled') Alert.alert('Import failed', msg);
+    } finally {
+      setDriveBusy(false);
+    }
   };
 
   const totalNotional = positions.reduce((a, p) => a + p.current * p.qty, 0);
@@ -266,16 +257,15 @@ export default function PortfolioScreen() {
           )}
         </View>
 
-        {/* ── Google Drive backup ──────────────────────────────────────── */}
+        {/* ── Local backup ─────────────────────────────────────────────── */}
         <View style={s.systemCard}>
           <View style={s.systemRow}>
             <View style={[s.systemDot, { backgroundColor: Colors.accent }]} />
-            <Text style={s.systemLabel}>DRIVE BACKUP</Text>
-            <Text style={s.calStatus}>LINKED</Text>
+            <Text style={s.systemLabel}>LOCAL BACKUP</Text>
           </View>
           <Text style={s.systemSub}>
-            Saves your portfolio, calendar overrides and scout cache to the hidden
-            appDataFolder in {userProfile?.email ?? 'your Drive'} — invisible to other apps and other users.
+            Export your positions, calendar overrides, and scout cache as a JSON file.
+            Share it to WhatsApp, email, or any storage app — then import it to restore.
           </Text>
           <View style={s.driveActions}>
             <Pressable
@@ -283,20 +273,16 @@ export default function PortfolioScreen() {
               onPress={handleBackup}
               disabled={driveBusy}
             >
-              <Text style={s.driveBtnText}>{driveBusy ? 'Working…' : 'Backup Now'}</Text>
+              <Text style={s.driveBtnText}>{driveBusy ? 'Working…' : 'Export Backup'}</Text>
             </Pressable>
             <Pressable
               style={[s.driveBtn, s.driveBtnRestore, driveBusy && s.pingBtnDisabled]}
               onPress={handleRestore}
               disabled={driveBusy}
             >
-              <Text style={[s.driveBtnText, { color: Colors.accentInk }]}>Restore from Cloud</Text>
+              <Text style={[s.driveBtnText, { color: Colors.accentInk }]}>Import Backup</Text>
             </Pressable>
           </View>
-          {/* Logout lives here as a lower-prominence action */}
-          <Pressable style={s.logoutBtn} onPress={handleLogout}>
-            <Text style={s.logoutText}>Sign out of Google</Text>
-          </Pressable>
         </View>
 
         {/* Telegram integration test */}
