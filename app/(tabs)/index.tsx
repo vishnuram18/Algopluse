@@ -14,6 +14,7 @@ import StockCard from '../../components/StockCard';
 import HandshakeDrawer from '../../components/HandshakeDrawer';
 import AlertBanner from '../../components/AlertBanner';
 import { useConnectionPulse } from '../../hooks/useConnectionPulse';
+import UserAvatar from '../../components/UserAvatar';
 
 const CLAUDE_KEY = process.env.EXPO_PUBLIC_CLAUDE_API_KEY ?? '';
 
@@ -43,7 +44,8 @@ export default function ScoutScreen() {
   const [cachedAt,    setCachedAt]    = useState<number | null>(null);
   const [toast,       setToast]       = useState<string | null>(null);
 
-  const pulse = useConnectionPulse();
+  const pulse       = useConnectionPulse();
+  const userProfile = useAppStore(s => s.userProfile);
 
   // Ref so handleCardPress is always stable
   const candidatesRef = useRef(candidates);
@@ -180,7 +182,7 @@ export default function ScoutScreen() {
             <Text style={s.title}>{"Today's\nopportunities"}</Text>
           </View>
           <View style={s.headerRight}>
-            {/* Pulse dot */}
+            {/* Connection pulse dot */}
             <View style={[
               s.pulseDot,
               pulse.isUp === true  && s.pulseDotUp,
@@ -189,6 +191,8 @@ export default function ScoutScreen() {
             {pulse.isUp === false && (
               <Text style={s.pulseOffline}>Offline</Text>
             )}
+            {/* User avatar */}
+            {userProfile && <UserAvatar profile={userProfile} size={30} />}
             {/* Source toggle */}
             <Pressable
               style={[s.modeToggle, isCached && s.modeToggleCached]}

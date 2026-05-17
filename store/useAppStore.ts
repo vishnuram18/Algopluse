@@ -6,11 +6,18 @@ import { fireTargetNotification, fireStopLossNotification } from '../services/no
 
 interface Alert { ticker: string; name: string; price: number }
 
+export interface UserProfile {
+  name:    string;
+  email:   string;
+  picture: string;
+}
+
 interface AppState {
   positions:     Position[];
   scoutTab:      ScoutTab;
   selectedStock: ScoutCandidate | null;
   alert:         Alert | null;
+  userProfile:   UserProfile | null;
 
   loadPositions:   () => Promise<void>;
   commitPosition:  (pos: Position) => Promise<void>;
@@ -19,6 +26,7 @@ interface AppState {
   setSelectedStock:(s: ScoutCandidate | null) => void;
   setScoutTab:     (t: ScoutTab) => void;
   dismissAlert:    () => void;
+  setUserProfile:  (p: UserProfile | null) => void;
 }
 
 function deriveStatus(pnl: number, current: number, target: number): PositionStatus {
@@ -33,6 +41,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   scoutTab:      'momentum',
   selectedStock: null,
   alert:         null,
+  userProfile:   null,
 
   loadPositions: async () => {
     const positions = await getAllPositions();
@@ -84,4 +93,5 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSelectedStock: (selectedStock) => set({ selectedStock }),
   setScoutTab:      (scoutTab)      => set({ scoutTab }),
   dismissAlert:     ()              => set({ alert: null }),
+  setUserProfile:   (userProfile)   => set({ userProfile }),
 }));

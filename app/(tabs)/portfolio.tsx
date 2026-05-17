@@ -6,18 +6,19 @@ import PositionCard from '../../components/PositionCard';
 import AlertBanner from '../../components/AlertBanner';
 import { sendSystemOnline } from '../../services/telegramService';
 import { marketCalendar } from '../../services/marketCalendarService';
-import {
-  signInWithGoogle, signOut, isSignedIn,
-  backupToDrive, restoreFromDrive,
-} from '../../services/driveBackupService';
+import { signOut as googleSignOut } from '../../services/authService';
+import { backupToDrive, restoreFromDrive } from '../../services/driveBackupService';
 import { CalendarEntry } from '../../types';
+import UserAvatar from '../../components/UserAvatar';
+import { router } from 'expo-router';
 
 export default function PortfolioScreen() {
   const { positions, refreshPrices, alert, dismissAlert } = useAppStore();
-  const [pinging,        setPinging]        = useState(false);
-  const [calBusy,        setCalBusy]        = useState(false);
-  const [driveSignedIn,  setDriveSignedIn]  = useState(false);
-  const [driveBusy,      setDriveBusy]      = useState(false);
+  const [pinging,  setPinging]  = useState(false);
+  const [calBusy,  setCalBusy]  = useState(false);
+  const [driveBusy,setDriveBusy]= useState(false);
+  const userProfile = useAppStore(s => s.userProfile);
+  const setUserProfile = useAppStore(s => s.setUserProfile);
   const [todayEntry,     setTodayEntry]     = useState<CalendarEntry | null>(null);
   const [upcoming,       setUpcoming]       = useState<CalendarEntry[]>([]);
   const [marketOpen,     setMarketOpen]     = useState<boolean | null>(null);
@@ -39,32 +40,16 @@ export default function PortfolioScreen() {
 
   useEffect(() => { refreshCalendar(); }, [refreshCalendar]);
 
-  useEffect(() => {
-    isSignedIn().then(setDriveSignedIn).catch(() => {});
-  }, []);
-
-  const handleDriveAuth = async () => {
-    if (driveSignedIn) {
-      Alert.alert('Sign out of Google?', 'Your local data will not be affected.', [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Sign out', style: 'destructive', onPress: async () => {
-            await signOut();
-            setDriveSignedIn(false);
-          },
+  const handleLogout = () => {
+    Alert.alert('Sign out?', 'Your local positions and cache will be kept on this device.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Sign out', style: 'destructive', onPress: async () => {
+          await googleSignOut();
+          setUserProfile(null);
+          router.replace('/login');
         },
-      ]);
-      return;
-    }
-    setDriveBusy(true);
-    try {
-      const ok = await signInWithGoogle();
-      setDriveSignedIn(ok);
-      if (!ok) Alert.alert('Sign-in cancelled');
-    } catch (e: unknown) {
-      Alert.alert('Google Sign-in Failed', e instanceof Error ? e.message : String(e));
-    } finally {
-      setDriveBusy(false);
-    }
+      },
+    ]);
   };
 
   const handleBackup = async () => {
@@ -158,9 +143,19 @@ export default function PortfolioScreen() {
             <Text style={s.eyebrow}>ACTIVE SENTINEL</Text>
             <Text style={s.title}>Your positions</Text>
           </View>
-          <Pressable style={s.refreshBtn} onPress={refreshPrices}>
-            <Text style={s.refreshIcon}>⟳</Text>
-          </Pressable>
+          <View style={s.headerRight}>
+            {userProfile && (
+              <Pressable style={s.userRow} onPress={handleLogout}>
+                <UserAvatar profile={userProfile} size={30} />
+                <Text style={s.userName} numberOfLines={1}>
+                  {userProfile.name.split(' ')[0]}
+                </Text>
+              </Pressable>
+            )}
+            <Pressable style={s.refreshBtn} onPress={refreshPrices}>
+              <Text style={s.refreshIcon}>⟳</Text>
+            </Pressable>
+          </View>
         </View>
 
         {positions.length > 0 && (
@@ -274,45 +269,34 @@ export default function PortfolioScreen() {
         {/* ── Google Drive backup ──────────────────────────────────────── */}
         <View style={s.systemCard}>
           <View style={s.systemRow}>
-            <View style={[s.systemDot, { backgroundColor: driveSignedIn ? Colors.accent : Colors.muted2 }]} />
+            <View style={[s.systemDot, { backgroundColor: Colors.accent }]} />
             <Text style={s.systemLabel}>DRIVE BACKUP</Text>
-            <Text style={s.calStatus}>{driveSignedIn ? 'LINKED' : 'NOT LINKED'}</Text>
+            <Text style={s.calStatus}>LINKED</Text>
           </View>
           <Text style={s.systemSub}>
-            {driveSignedIn
-              ? 'Backs up your portfolio, calendar overrides, and scout cache to the hidden appDataFolder — invisible in Drive.'
-              : 'Sign in with Google to enable automatic cloud backup and one-tap restore after a device reset.'}
+            Saves your portfolio, calendar overrides and scout cache to the hidden
+            appDataFolder in {userProfile?.email ?? 'your Drive'} — invisible to other apps and other users.
           </Text>
-
-          {/* Sign in / out */}
-          <Pressable
-            style={[s.pingBtn, !driveSignedIn && s.driveSignInBtn, driveBusy && s.pingBtnDisabled]}
-            onPress={handleDriveAuth}
-            disabled={driveBusy}
-          >
-            <Text style={[s.pingBtnText, !driveSignedIn && { color: Colors.accentInk }]}>
-              {driveBusy ? '…' : driveSignedIn ? 'Sign out of Google' : 'Sign in with Google'}
-            </Text>
+          <View style={s.driveActions}>
+            <Pressable
+              style={[s.driveBtn, driveBusy && s.pingBtnDisabled]}
+              onPress={handleBackup}
+              disabled={driveBusy}
+            >
+              <Text style={s.driveBtnText}>{driveBusy ? 'Working…' : 'Backup Now'}</Text>
+            </Pressable>
+            <Pressable
+              style={[s.driveBtn, s.driveBtnRestore, driveBusy && s.pingBtnDisabled]}
+              onPress={handleRestore}
+              disabled={driveBusy}
+            >
+              <Text style={[s.driveBtnText, { color: Colors.accentInk }]}>Restore from Cloud</Text>
+            </Pressable>
+          </View>
+          {/* Logout lives here as a lower-prominence action */}
+          <Pressable style={s.logoutBtn} onPress={handleLogout}>
+            <Text style={s.logoutText}>Sign out of Google</Text>
           </Pressable>
-
-          {driveSignedIn && (
-            <View style={s.driveActions}>
-              <Pressable
-                style={[s.driveBtn, driveBusy && s.pingBtnDisabled]}
-                onPress={handleBackup}
-                disabled={driveBusy}
-              >
-                <Text style={s.driveBtnText}>{driveBusy ? 'Working…' : 'Backup Now'}</Text>
-              </Pressable>
-              <Pressable
-                style={[s.driveBtn, s.driveBtnRestore, driveBusy && s.pingBtnDisabled]}
-                onPress={handleRestore}
-                disabled={driveBusy}
-              >
-                <Text style={[s.driveBtnText, { color: Colors.accentInk }]}>Restore from Cloud</Text>
-              </Pressable>
-            </View>
-          )}
         </View>
 
         {/* Telegram integration test */}
@@ -347,7 +331,10 @@ const s = StyleSheet.create({
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', paddingTop: Space.base, marginBottom: Space.md },
   eyebrow:{ fontSize: 10, color: Colors.muted, letterSpacing: 1.4, textTransform: 'uppercase', fontWeight: '500', marginBottom: 4 },
   title:  { fontFamily: Fonts.serifMedium, fontSize: 26, color: Colors.ink, letterSpacing: -0.5 },
-  refreshBtn: { width: 36, height: 36, borderRadius: Radii.md, borderWidth: 1, borderColor: Colors.hair, alignItems: 'center', justifyContent: 'center', marginTop: 28 },
+  headerRight:{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 28 },
+  userRow:    { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  userName:   { fontFamily: Fonts.mono, fontSize: 11, color: Colors.ink, maxWidth: 72 },
+  refreshBtn: { width: 36, height: 36, borderRadius: Radii.md, borderWidth: 1, borderColor: Colors.hair, alignItems: 'center', justifyContent: 'center' },
   refreshIcon:{ fontSize: 18, color: Colors.muted },
   summaryCard:    { flexDirection: 'row', borderWidth: 1, borderColor: Colors.hair, borderRadius: Radii.card, marginBottom: Space.md },
   summaryCol:     { flex: 1, alignItems: 'center', paddingVertical: Space.base },
@@ -401,10 +388,12 @@ const s = StyleSheet.create({
   calListLabel:   { fontFamily: Fonts.mono, fontSize: 10, color: Colors.muted, flex: 1 },
 
   // Drive backup
-  driveSignInBtn: { backgroundColor: Colors.accentSoft, borderWidth: 1, borderColor: Colors.accent },
   driveActions:   { flexDirection: 'row', gap: 8, marginTop: Space.sm },
   driveBtn:       { flex: 1, borderRadius: Radii.sm, borderWidth: 1,
                     borderColor: Colors.hairStrong, paddingVertical: 10, alignItems: 'center' },
   driveBtnRestore:{ backgroundColor: Colors.accentSoft, borderColor: Colors.accent },
   driveBtnText:   { fontFamily: Fonts.mono, fontSize: 11, color: Colors.ink },
+  logoutBtn:      { marginTop: Space.sm, paddingVertical: 8, alignItems: 'center' },
+  logoutText:     { fontFamily: Fonts.mono, fontSize: 11, color: Colors.muted,
+                    textDecorationLine: 'underline' },
 });
