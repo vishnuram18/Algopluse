@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, ScrollView, Pressable, StyleSheet,
-  ActivityIndicator, SafeAreaView,
+  ActivityIndicator, SafeAreaView, Alert,
 } from 'react-native';
 import { Colors, Fonts, Space, Radii } from '../../theme/tokens';
 import { ScoutCandidate, ScoutTab } from '../../types';
@@ -11,6 +11,7 @@ import { analyseStock } from '../../services/stockAnalysis';
 import {
   saveCandidatesCache, getCandidatesCache,
   getScanIntervalMins, setScanIntervalMins,
+  getPcServerUrl,
 } from '../../services/database';
 import { useAppStore } from '../../store/useAppStore';
 import StockCard from '../../components/StockCard';
@@ -55,6 +56,7 @@ export default function ScoutScreen() {
   const [cachedAt,      setCachedAt]      = useState<number | null>(null);
   const [toast,         setToast]         = useState<string | null>(null);
   const [intervalMins,  setIntervalMins]  = useState(0);
+  const [pcServerUrl,   setPcServerUrl_]  = useState('');
 
   const pulse       = useConnectionPulse();
   const userProfile = useAppStore(s => s.userProfile);
@@ -150,19 +152,51 @@ export default function ScoutScreen() {
     setCachedAt(now);
   }, [scoutTab, loadFromCache, showToast]);
 
-  // ── Reload button — respects current mode ────────────────────────────────────
-  // Sync mode  → fetch live from Yahoo Finance
-  // Local mode → read from SQLite cache (timer handles the background pull)
-  const handleReload = useCallback(() => {
-    pulse.check();
-    if (mode === 'CACHED') {
-      loadFromCache().then(ok => {
-        if (!ok) showToast('No cache yet — tap Go Live or wait for auto-refresh');
+  // ── PC reachability check ─────────────────────────────────────────────────────
+  const checkPcServer = useCallback(async (url: string): Promise<boolean> => {
+    try {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 4000);
+      const res = await fetch(url.endsWith('/') ? url + 'health' : url + '/health', {
+        signal: controller.signal,
       });
-    } else {
-      loadLive();
+      clearTimeout(t);
+      return res.ok;
+    } catch {
+      return false;
     }
-  }, [pulse, mode, loadLive, loadFromCache, showToast]);
+  }, []);
+
+  // ── Reload button — respects current mode ────────────────────────────────────
+  // Live mode  → check PC server first; Alert if unreachable, then fetch
+  // Local mode → read from SQLite cache only (auto-refresh timer fetches live)
+  const handleReload = useCallback(async () => {
+    pulse.check();
+
+    if (mode === 'CACHED') {
+      const ok = await loadFromCache();
+      if (!ok) showToast('No cache yet — wait for auto-refresh or switch to Live');
+      return;
+    }
+
+    // Live mode — verify PC server is reachable if a URL is configured
+    if (pcServerUrl) {
+      const up = await checkPcServer(pcServerUrl);
+      if (!up) {
+        Alert.alert(
+          'PC Not Reachable',
+          `Could not connect to your PC server at:\n${pcServerUrl}\n\nMake sure your PC is on and the server is running. Switch to Local mode to use your phone's internet instead.`,
+          [
+            { text: 'OK', style: 'cancel' },
+            { text: 'Switch to Local', onPress: () => setMode('CACHED') },
+          ]
+        );
+        return;
+      }
+    }
+
+    loadLive();
+  }, [pulse, mode, pcServerUrl, checkPcServer, loadLive, loadFromCache, showToast]);
 
   // ── Auto-refresh interval ─────────────────────────────────────────────────────
   const changeInterval = useCallback(async (mins: number) => {
@@ -180,11 +214,15 @@ export default function ScoutScreen() {
     };
   }, [intervalMins, loadLive]);
 
-  // ── On mount: load interval setting, then try live / fallback to cache ────────
+  // ── On mount: load settings, then try live / fallback to cache ───────────────
   useEffect(() => {
-    getScanIntervalMins()
-      .then(mins => setIntervalMins(mins))
-      .catch(() => {});
+    Promise.all([
+      getScanIntervalMins().catch(() => 0),
+      getPcServerUrl().catch(() => ''),
+    ]).then(([mins, url]) => {
+      setIntervalMins(mins);
+      setPcServerUrl_(url);
+    });
 
     loadFromCache().then(ok => {
       if (ok) setMode('CACHED');

@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, ScrollView, StyleSheet, SafeAreaView, Pressable, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, SafeAreaView, Pressable, Alert, TextInput } from 'react-native';
 import { Colors, Fonts, Space, Radii } from '../../theme/tokens';
 import { useAppStore } from '../../store/useAppStore';
 import PositionCard from '../../components/PositionCard';
@@ -8,6 +8,7 @@ import { sendSystemOnline } from '../../services/telegramService';
 import { marketCalendar } from '../../services/marketCalendarService';
 import { signOut as googleSignOut } from '../../services/authService';
 import { exportBackup, importBackup } from '../../services/localBackupService';
+import { getPcServerUrl, setPcServerUrl } from '../../services/database';
 import { CalendarEntry } from '../../types';
 import UserAvatar from '../../components/UserAvatar';
 import { router } from 'expo-router';
@@ -22,8 +23,14 @@ export default function PortfolioScreen() {
   const [todayEntry,     setTodayEntry]     = useState<CalendarEntry | null>(null);
   const [upcoming,       setUpcoming]       = useState<CalendarEntry[]>([]);
   const [marketOpen,     setMarketOpen]     = useState<boolean | null>(null);
+  const [pcUrl,          setPcUrl]          = useState('');
+  const [pcUrlSaved,     setPcUrlSaved]     = useState(false);
 
   useEffect(() => { if (positions.length > 0) refreshPrices(); }, []);
+
+  useEffect(() => {
+    getPcServerUrl().then(url => setPcUrl(url)).catch(() => {});
+  }, []);
 
   const refreshCalendar = useCallback(async () => {
     try {
@@ -285,6 +292,38 @@ export default function PortfolioScreen() {
           </View>
         </View>
 
+        {/* ── PC Server settings ───────────────────────────────────────── */}
+        <View style={s.systemCard}>
+          <View style={s.systemRow}>
+            <View style={[s.systemDot, { backgroundColor: pcUrl ? Colors.accent : Colors.sepia }]} />
+            <Text style={s.systemLabel}>PC SERVER (LIVE MODE)</Text>
+          </View>
+          <Text style={s.systemSub}>
+            Enter your PC's local IP and port (e.g. http://192.168.1.100:8080).
+            When set, Live mode checks if your PC is reachable before fetching data.
+            Leave blank to skip the PC check.
+          </Text>
+          <TextInput
+            style={s.urlInput}
+            value={pcUrl}
+            onChangeText={text => { setPcUrl(text); setPcUrlSaved(false); }}
+            placeholder="http://192.168.x.x:8080"
+            placeholderTextColor={Colors.muted2}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="url"
+          />
+          <Pressable
+            style={s.urlSaveBtn}
+            onPress={async () => {
+              await setPcServerUrl(pcUrl).catch(() => {});
+              setPcUrlSaved(true);
+            }}
+          >
+            <Text style={s.urlSaveBtnText}>{pcUrlSaved ? 'Saved ✓' : 'Save URL'}</Text>
+          </Pressable>
+        </View>
+
         {/* Telegram integration test */}
         <View style={s.systemCard}>
           <View style={s.systemRow}>
@@ -372,6 +411,14 @@ const s = StyleSheet.create({
   calListDate:    { fontFamily: Fonts.mono, fontSize: 10.5, color: Colors.ink, width: 90 },
   calListType:    { fontFamily: Fonts.mono, fontSize: 10, width: 54 },
   calListLabel:   { fontFamily: Fonts.mono, fontSize: 10, color: Colors.muted, flex: 1 },
+
+  // PC server URL input
+  urlInput:      { borderWidth: 1, borderColor: Colors.hairStrong, borderRadius: Radii.sm,
+                   paddingHorizontal: 10, paddingVertical: 9, fontFamily: Fonts.mono,
+                   fontSize: 12, color: Colors.ink, marginBottom: 8 },
+  urlSaveBtn:    { alignSelf: 'flex-start', backgroundColor: Colors.accent,
+                   borderRadius: Radii.sm, paddingHorizontal: 14, paddingVertical: 8 },
+  urlSaveBtnText:{ fontFamily: Fonts.mono, fontSize: 11, color: '#fff' },
 
   // Drive backup
   driveActions:   { flexDirection: 'row', gap: 8, marginTop: Space.sm },

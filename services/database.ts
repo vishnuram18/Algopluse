@@ -120,6 +120,20 @@ export async function setScanIntervalMins(mins: number): Promise<void> {
   );
 }
 
+export async function getPcServerUrl(): Promise<string> {
+  const row = await db.getFirstAsync<{ value: string }>(
+    `SELECT value FROM app_state WHERE key = 'pc_server_url'`
+  );
+  return row?.value ?? '';
+}
+
+export async function setPcServerUrl(url: string): Promise<void> {
+  await db.runAsync(
+    `INSERT OR REPLACE INTO app_state (key, value) VALUES ('pc_server_url', ?)`,
+    [url.trim()]
+  );
+}
+
 export async function getLastSyncAt(): Promise<number> {
   const row = await db.getFirstAsync<{ value: string }>(
     `SELECT value FROM app_state WHERE key = 'last_sync_at'`
