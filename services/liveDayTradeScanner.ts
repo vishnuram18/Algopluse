@@ -163,6 +163,11 @@ class LiveDayTradeScanner {
         };
 
         this.lastAlertedAt.set(shocker.symbol, Date.now());
+        // Prune entries older than 2× cooldown to prevent unbounded Map growth
+        const cutoff = Date.now() - COOLDOWN_MS * 2;
+        for (const [ticker, ts] of this.lastAlertedAt) {
+          if (ts < cutoff) this.lastAlertedAt.delete(ticker);
+        }
         approved.push(entry);
 
         // Fire-and-forget — don't let a Telegram failure break the scan loop

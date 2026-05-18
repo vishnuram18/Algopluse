@@ -1,11 +1,11 @@
 import React from 'react';
 import { Pressable, View, Text, StyleSheet } from 'react-native';
 import { Colors, Fonts, Radii, Space } from '../theme/tokens';
-import { ScoutCandidate, ScoreBreakdown } from '../types';
+import { ScoutCandidate, ScoreBreakdown, WeightedScore } from '../types';
 
 interface Props {
   data:    ScoutCandidate;
-  onPress: (ticker: string) => void;  // stable ticker-keyed callback
+  onPress: (ticker: string) => void;
 }
 
 const VERDICT_COLORS = {
@@ -21,9 +21,31 @@ const SCORE_PIPS: { key: keyof ScoreBreakdown; label: string }[] = [
   { key: 'growthPositive', label: 'Growth' },
 ];
 
-// Stable formatter — defined outside the component so it is never recreated
 const fmt = (n: number) =>
   n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+function scoreColor(best: number): string {
+  if (best >= 70) return Colors.accent;
+  if (best >= 45) return Colors.sepia;
+  return Colors.hairStrong;
+}
+function scoreTextColor(best: number): string {
+  if (best >= 70) return Colors.accentInk;
+  if (best >= 45) return Colors.sepia;
+  return Colors.muted;
+}
+function scoreBg(best: number): string {
+  if (best >= 70) return Colors.accentSoft;
+  if (best >= 45) return Colors.sepiaSoft;
+  return Colors.raised;
+}
+
+function macdArrow(ws: WeightedScore, histogram: number | undefined): string {
+  if (histogram === undefined) return '';
+  if (histogram > 0 && ws.swing >= 55) return '↑';
+  if (histogram > 0)                   return '→';
+  return '↓';
+}
 
 function StockCard({ data, onPress }: Props) {
   const up         = data.change >= 0;
@@ -31,6 +53,25 @@ function StockCard({ data, onPress }: Props) {
   const indToneKey = data.indicator.tone === 'accent' ? 'approved'
                    : data.indicator.tone === 'sepia'  ? 'watch' : 'declined';
   const indTone    = VERDICT_COLORS[indToneKey];
+
+  const ws   = data.weightedScore;
+  const best = ws ? Math.max(ws.swing, ws.intraday) : 0;
+
+  // EMA alignment for colored dots
+  const sig    = data.signals;
+  const ema20  = sig?.ema20  ?? null;
+  const ema50  = sig?.ema50  ?? null;
+  const sma200 = sig?.sma200 ?? null;
+  const emaStack = ema20 !== null && ema50 !== null && sma200 !== null;
+  const ema20Color  = ema20 && ema50 && ema20 > ema50    ? Colors.accent : Colors.hairStrong;
+  const ema50Color  = ema50 && sma200 && ema50 > sma200  ? Colors.accent : Colors.hairStrong;
+  const sma200Color = sma200 && data.price && data.price > sma200 ? Colors.accentInk : Colors.hairStrong;
+
+  const macdHist  = sig?.macd?.histogram;
+  const arrow     = ws ? macdArrow(ws, macdHist) : '';
+  const arrowColor = arrow === '↑' ? Colors.accentInk
+                   : arrow === '→' ? Colors.sepia
+                   : Colors.danger;
 
   return (
     <Pressable
@@ -67,8 +108,57 @@ function StockCard({ data, onPress }: Props) {
 
       <View style={s.divider} />
 
-      {/* Score row — visible once analyseStock has run */}
-      {data.breakdown && (
+      {/* Score section — weighted bar (new) or legacy pip row (old cache) */}
+      {ws ? (
+        <View style={s.scoreSection}>
+          {/* Progress bar */}
+          <View style={s.scoreBarRow}>
+            <View style={s.scoreBarTrack}>
+              <View style={[s.scoreBarFill, {
+                width:           `${best}%` as any,
+                backgroundColor: scoreColor(best),
+              }]} />
+            </View>
+            <View style={[s.scoreChip, {
+              backgroundColor: scoreBg(best),
+              borderColor:     scoreColor(best),
+            }]}>
+              <Text style={[s.scoreChipText, { color: scoreTextColor(best) }]}>
+                {best}/100
+              </Text>
+            </View>
+          </View>
+
+          {/* Signal pills row */}
+          <View style={s.signalRow}>
+            <Text style={[s.scoreDetail]}>
+              S:{ws.swing} · I:{ws.intraday}
+            </Text>
+            {arrow !== '' && (
+              <View style={s.signalPill}>
+                <Text style={[s.signalPillText, { color: arrowColor }]}>
+                  MACD {arrow}
+                </Text>
+              </View>
+            )}
+            {emaStack && (
+              <View style={[s.signalPill, s.emaPill]}>
+                <View style={[s.emaDot, { backgroundColor: ema20Color }]} />
+                <View style={[s.emaDot, { backgroundColor: ema50Color }]} />
+                <View style={[s.emaDot, { backgroundColor: sma200Color }]} />
+                <Text style={s.signalPillText}>EMA</Text>
+              </View>
+            )}
+            {data.scanSource && (
+              <View style={[s.sourceChip, data.scanSource === 'pc' && s.sourceChipPc]}>
+                <Text style={[s.sourceChipText, data.scanSource === 'pc' && s.sourceChipPcText]}>
+                  {data.scanSource === 'pc' ? 'PC' : 'PHONE'}
+                </Text>
+              </View>
+            )}
+          </View>
+        </View>
+      ) : data.breakdown ? (
         <View style={s.scoreRow}>
           {SCORE_PIPS.map(({ key, label }) => {
             const pass = data.breakdown![key];
@@ -95,7 +185,7 @@ function StockCard({ data, onPress }: Props) {
             </Text>
           </View>
         </View>
-      )}
+      ) : null}
 
       {/* Verdict block */}
       <View style={[s.verdictBlock, { borderLeftColor: verdict.border }]}>
@@ -125,21 +215,22 @@ function StockCard({ data, onPress }: Props) {
   );
 }
 
-// Only re-render a card when its visible data actually changes.
-// ticker/name/exchange/currency/sector are immutable — not compared.
 function propsAreEqual(prev: Props, next: Props): boolean {
   const a = prev.data;
   const b = next.data;
   return (
-    prev.onPress       === next.onPress        &&
-    a.price            === b.price             &&
-    a.change           === b.change            &&
-    a.score            === b.score             &&
-    a.expectedDays     === b.expectedDays      &&
-    a.indicator.value  === b.indicator.value   &&
-    a.indicator.tone   === b.indicator.tone    &&
-    a.verdict.status   === b.verdict.status    &&
-    a.verdict.body     === b.verdict.body
+    prev.onPress               === next.onPress             &&
+    a.price                    === b.price                  &&
+    a.change                   === b.change                 &&
+    a.score                    === b.score                  &&
+    a.expectedDays             === b.expectedDays           &&
+    a.indicator.value          === b.indicator.value        &&
+    a.indicator.tone           === b.indicator.tone         &&
+    a.verdict.status           === b.verdict.status         &&
+    a.verdict.body             === b.verdict.body           &&
+    a.weightedScore?.swing     === b.weightedScore?.swing   &&
+    a.weightedScore?.intraday  === b.weightedScore?.intraday &&
+    a.scanSource               === b.scanSource
   );
 }
 
@@ -162,11 +253,11 @@ const s = StyleSheet.create({
   name:     { fontFamily: Fonts.serif, fontSize: 12, color: Colors.muted, marginTop: 2 },
 
   badge: {
-    borderWidth:   1,
-    borderRadius:  Radii.sm,
+    borderWidth:       1,
+    borderRadius:      Radii.sm,
     paddingHorizontal: Space.sm,
     paddingVertical:   Space.xs,
-    alignItems:    'center',
+    alignItems:        'center',
   },
   badgeLabel: { fontFamily: Fonts.mono, fontSize: 9,  letterSpacing: 0.5 },
   badgeValue: { fontFamily: Fonts.monoMedium, fontSize: 13, marginTop: 1 },
@@ -180,12 +271,15 @@ const s = StyleSheet.create({
 
   divider: { height: 1, backgroundColor: Colors.hair, marginBottom: Space.sm },
 
-  scoreRow: { flexDirection: 'row', alignItems: 'center', gap: Space.xs, marginBottom: Space.sm },
-  scorePip: { flexDirection: 'row', alignItems: 'center', gap: 4, flex: 1 },
-  pipDot:       { width: 7, height: 7, borderRadius: 4, backgroundColor: Colors.hairStrong },
-  pipDotPass:   { backgroundColor: Colors.accent },
-  pipLabel:     { fontFamily: Fonts.mono, fontSize: 9, color: Colors.muted2 },
-  pipLabelPass: { color: Colors.accentInk },
+  // ── Weighted score display ──────────────────────────────────────────────────
+  scoreSection: { marginBottom: Space.sm, gap: 6 },
+
+  scoreBarRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  scoreBarTrack: {
+    flex: 1, height: 5, borderRadius: 3,
+    backgroundColor: Colors.hair, overflow: 'hidden',
+  },
+  scoreBarFill: { height: '100%', borderRadius: 3 },
 
   scoreChip: {
     borderWidth:       1,
@@ -193,11 +287,45 @@ const s = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical:   2,
   },
+  scoreChipText: { fontFamily: Fonts.monoMedium, fontSize: 10 },
+
+  signalRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  scoreDetail: { fontFamily: Fonts.mono, fontSize: 9.5, color: Colors.muted2, flex: 1 },
+
+  signalPill: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    borderWidth: 1, borderColor: Colors.hair,
+    borderRadius: Radii.xs,
+    paddingHorizontal: 5, paddingVertical: 2,
+    backgroundColor: Colors.canvas,
+  },
+  emaPill: { gap: 2 },
+  signalPillText: { fontFamily: Fonts.mono, fontSize: 9.5, color: Colors.muted },
+  emaDot: { width: 6, height: 6, borderRadius: 3 },
+
+  sourceChip: {
+    paddingHorizontal: 5, paddingVertical: 2,
+    borderRadius: Radii.xs,
+    borderWidth: 1, borderColor: Colors.hairStrong,
+    backgroundColor: Colors.sepiaSoft,
+  },
+  sourceChipPc: { backgroundColor: Colors.accentSoft, borderColor: Colors.accent },
+  sourceChipText: { fontFamily: Fonts.mono, fontSize: 8.5, color: Colors.sepia },
+  sourceChipPcText: { color: Colors.accentInk },
+
+  // ── Legacy pip row (for old cached candidates) ──────────────────────────────
+  scoreRow: { flexDirection: 'row', alignItems: 'center', gap: Space.xs, marginBottom: Space.sm },
+  scorePip: { flexDirection: 'row', alignItems: 'center', gap: 4, flex: 1 },
+  pipDot:       { width: 7, height: 7, borderRadius: 4, backgroundColor: Colors.hairStrong },
+  pipDotPass:   { backgroundColor: Colors.accent },
+  pipLabel:     { fontFamily: Fonts.mono, fontSize: 9, color: Colors.muted2 },
+  pipLabelPass: { color: Colors.accentInk },
+
   scoreChipApproved: { backgroundColor: Colors.accentSoft, borderColor: Colors.accent },
   scoreChipWatch:    { backgroundColor: Colors.sepiaSoft,  borderColor: Colors.sepia  },
   scoreChipDeclined: { backgroundColor: Colors.raised,     borderColor: Colors.hairStrong },
-  scoreChipText:     { fontFamily: Fonts.monoMedium, fontSize: 10 },
 
+  // ── Verdict ─────────────────────────────────────────────────────────────────
   verdictBlock: {
     borderLeftWidth: 2,
     paddingLeft:     Space.sm,
@@ -210,6 +338,7 @@ const s = StyleSheet.create({
   verdictPillText:{ fontFamily: Fonts.monoMedium, fontSize: 10 },
   verdictBody:    { fontFamily: Fonts.serif, fontSize: 13, color: Colors.inkSoft, lineHeight: 19 },
 
+  // ── Footer ──────────────────────────────────────────────────────────────────
   foot:          { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: Space.xs },
   footLabel:     { fontFamily: Fonts.mono, fontSize: 9, color: Colors.muted2, letterSpacing: 0.6 },
   footRight:     { flexDirection: 'row', alignItems: 'center', gap: Space.xs },

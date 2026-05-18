@@ -2,7 +2,7 @@ import { nseClient } from './nseDataClient';
 import { getSentimentCheck } from './claudeAnalysisService';
 import { sendDayTradeAlert } from './telegramService';
 import { useAppStore } from '../store/useAppStore';
-import { SCOUT_MOMENTUM, SCOUT_VALUE } from '../data/scoutCandidates';
+import { NIFTY_500, PHONE_SCAN_UNIVERSE } from '../data/nifty500';
 
 const CLAUDE_KEY = process.env.EXPO_PUBLIC_CLAUDE_API_KEY ?? '';
 
@@ -92,8 +92,8 @@ export async function runShortTerm(): Promise<StrategySignal[]> {
   const shockers = await nseClient.getVolumeShockers();
   const candidates = shockers.filter(s => s.ratio >= 3);
 
-  // Resolve stock name from SCOUT_MOMENTUM seed list
-  const nameMap = Object.fromEntries(SCOUT_MOMENTUM.map(c => [c.ticker, c.name]));
+  // Resolve stock name from Nifty 500 seed list
+  const nameMap = Object.fromEntries(NIFTY_500.map(c => [c.ticker, c.name]));
 
   const results = await Promise.allSettled(
     candidates.map(async s => {
@@ -134,7 +134,7 @@ export async function runShortTerm(): Promise<StrategySignal[]> {
 }
 
 // ── Long-term strategy ────────────────────────────────────────────────────────
-// Source: SCOUT_VALUE universe → daily close vs 200-day SMA
+// Source: PHONE_SCAN_UNIVERSE (top 100 Nifty) → daily close vs 200-day SMA
 // Signal: currentPrice > SMA200   →  ABOVE_SMA200
 
 export async function runLongTerm(): Promise<StrategySignal[]> {
@@ -142,7 +142,7 @@ export async function runLongTerm(): Promise<StrategySignal[]> {
   const signals:  StrategySignal[] = [];
 
   // Process sequentially to avoid hammering Yahoo Finance
-  for (const candidate of SCOUT_VALUE) {
+  for (const candidate of PHONE_SCAN_UNIVERSE) {
     try {
       const [closes, price] = await Promise.all([
         fetchCloses(candidate.ticker, '1d', '1y'),

@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { Colors, Fonts, Space, Radii } from '../../theme/tokens';
 import { ScoutCandidate, ScoutTab } from '../../types';
-import { SCOUT_MOMENTUM, SCOUT_VALUE } from '../../data/scoutCandidates';
+import { PHONE_SCAN_UNIVERSE, NiftyStock } from '../../data/nifty500';
 import { getBatchPrices } from '../../services/marketData';
 import { analyseStock } from '../../services/stockAnalysis';
 import {
@@ -40,6 +40,21 @@ function formatAge(cachedAt: number): string {
   return `${hrs}h ${mins % 60}m ago`;
 }
 
+function makePlaceholder(stock: NiftyStock, price: number): ScoutCandidate {
+  return {
+    ticker:    stock.ticker,
+    name:      stock.name,
+    exchange:  'NSE',
+    price,
+    currency:  '₹',
+    change:    0,
+    sector:    stock.sector,
+    indicator: { label: 'Scanning', value: '…', tone: 'muted' },
+    verdict:   { status: 'WATCH', tone: 'watch', body: 'Analysis in progress…' },
+    scanSource: 'phone',
+  };
+}
+
 export default function ScoutScreen() {
   const {
     scoutTab, setScoutTab,
@@ -48,26 +63,28 @@ export default function ScoutScreen() {
     alert, dismissAlert,
   } = useAppStore();
 
-  const [candidates,    setCandidates]    = useState<ScoutCandidate[]>(
-    scoutTab === 'momentum' ? SCOUT_MOMENTUM : SCOUT_VALUE
-  );
-  const [refreshing,    setRefreshing]    = useState(false);
-  const [mode,          setMode]          = useState<DataSourceMode>('LIVE');
-  const [cachedAt,      setCachedAt]      = useState<number | null>(null);
-  const [toast,         setToast]         = useState<string | null>(null);
-  const [intervalMins,  setIntervalMins]  = useState(0);
-  const [pcServerUrl,   setPcServerUrl_]  = useState('');
+  const [candidates,   setCandidates]   = useState<ScoutCandidate[]>([]);
+  const [refreshing,   setRefreshing]   = useState(false);
+  const [mode,         setMode]         = useState<DataSourceMode>('LIVE');
+  const [cachedAt,     setCachedAt]     = useState<number | null>(null);
+  const [toast,        setToast]        = useState<string | null>(null);
+  const [intervalMins, setIntervalMins] = useState(0);
+  const [pcServerUrl,  setPcServerUrl_] = useState('');
 
   const pulse       = useConnectionPulse();
   const userProfile = useAppStore(s => s.userProfile);
 
-  const candidatesRef  = useRef(candidates);
-  const intervalRef    = useRef<ReturnType<typeof setInterval> | null>(null);
+  const candidatesRef = useRef(candidates);
+  const intervalRef   = useRef<ReturnType<typeof setInterval> | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isMounted     = useRef(true);
+  const loadLiveRef   = useRef<() => Promise<void>>(async () => {});
   candidatesRef.current = candidates;
 
   const showToast = useCallback((msg: string) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setToast(msg);
-    setTimeout(() => setToast(null), 3000);
+    toastTimerRef.current = setTimeout(() => setToast(null), 3000);
   }, []);
 
   const handleCardPress = useCallback((ticker: string) => {
@@ -75,37 +92,52 @@ export default function ScoutScreen() {
     setSelectedStock(stock);
   }, [setSelectedStock]);
 
-  // ── Load from SQLite cache ────────────────────────────────────────────────────
+  // ── Display candidates sorted by active tab ───────────────────────────────
+  const displayCandidates = useMemo(() => {
+    const key = scoutTab === 'momentum' ? 'swing' : 'intraday';
+    return [...candidates].sort((a, b) => {
+      const sa = a.weightedScore?.[key] ?? 0;
+      const sb = b.weightedScore?.[key] ?? 0;
+      return sb - sa;
+    });
+  }, [candidates, scoutTab]);
+
+  // ── Qualified counts for segmented control ────────────────────────────────
+  const swingCleared    = useMemo(() => candidates.filter(c => (c.weightedScore?.swing    ?? 0) >= 55).length, [candidates]);
+  const intradayCleared = useMemo(() => candidates.filter(c => (c.weightedScore?.intraday ?? 0) >= 60).length, [candidates]);
+  const approved        = useMemo(() => candidates.filter(c => c.verdict.status === 'APPROVED').length, [candidates]);
+
+  // ── Load from SQLite cache ────────────────────────────────────────────────
   const loadFromCache = useCallback(async (): Promise<boolean> => {
     try {
       const cached = await getCandidatesCache();
       if (!cached) return false;
       const parsed: ScoutCandidate[] = JSON.parse(cached.json);
-      const base = scoutTab === 'momentum' ? SCOUT_MOMENTUM : SCOUT_VALUE;
-      const baseTickers = new Set(base.map(c => c.ticker));
-      const filtered = parsed.filter(c => baseTickers.has(c.ticker));
-      if (filtered.length === 0) return false;
-      setCandidates(filtered);
+      if (parsed.length === 0) return false;
+      setCandidates(parsed);
       setCachedAt(cached.cachedAt);
       return true;
     } catch {
       return false;
     }
-  }, [scoutTab]);
+  }, []);
 
-  // ── Live fetch (runs directly on phone — Yahoo Finance + Claude API) ──────────
+  // ── Live fetch — scans PHONE_SCAN_UNIVERSE (top 100 Nifty by market cap) ─
   const loadLive = useCallback(async () => {
-    const base = scoutTab === 'momentum' ? SCOUT_MOMENTUM : SCOUT_VALUE;
-    setCandidates(base);
+    setCandidates([]);
     setRefreshing(true);
 
-    const prices = await getBatchPrices(base.map(c => c.ticker)).catch(() => ({}));
-    const anyPrice = Object.values(prices as Record<string, number>).some(p => p > 0);
+    const allTickers = PHONE_SCAN_UNIVERSE.map(s => s.ticker);
+    const prices = await getBatchPrices(allTickers).catch(() => ({}));
+    if (!isMounted.current) return;
+
+    const priceMap = prices as Record<string, number>;
+    const anyPrice = Object.values(priceMap).some(p => p > 0);
 
     if (!anyPrice) {
-      // No internet — fall back to cache silently
       setRefreshing(false);
       const ok = await loadFromCache();
+      if (!isMounted.current) return;
       if (ok) {
         setMode('CACHED');
         showToast('No connection — showing local cache');
@@ -115,61 +147,68 @@ export default function ScoutScreen() {
       return;
     }
 
-    const withPrices = base.map(c => ({
-      ...c,
-      price: (prices as Record<string, number>)[c.ticker] ?? c.price,
-    }));
-    setCandidates(withPrices);
-    setRefreshing(false);
-    setMode('LIVE');
+    // Build initial placeholders for stocks that have a live price
+    const initialCandidates: ScoutCandidate[] = PHONE_SCAN_UNIVERSE
+      .filter(s => (priceMap[s.ticker] ?? 0) > 0)
+      .map(s => makePlaceholder(s, priceMap[s.ticker]));
 
-    const updated = [...withPrices];
+    if (isMounted.current) {
+      setCandidates(initialCandidates);
+      setRefreshing(false);
+      setMode('LIVE');
+    }
+
+    // Analyse each stock sequentially, updating cards as results arrive
+    const updated = [...initialCandidates];
     for (let i = 0; i < updated.length; i++) {
+      if (!isMounted.current) return;
       const c = updated[i];
       try {
         const result = await analyseStock(c.ticker, c.name, c.price, CLAUDE_KEY, c.sector);
-        const rsi = result.signals.rsi;
+        const ws  = result.weightedScore;
+        const best = Math.max(ws.swing, ws.intraday);
         updated[i] = {
           ...c,
           indicator: {
-            label: 'RSI 14',
-            value: rsi !== null ? rsi.toFixed(1) : '—',
-            tone:  result.breakdown.rsiOversold    ? 'accent'
-                 : rsi !== null && rsi < 50        ? 'sepia' : 'muted',
+            label: 'SCORE',
+            value: `${best}/100`,
+            tone:  best >= 70 ? 'accent' : best >= 45 ? 'sepia' : 'muted',
           },
-          verdict:      result.verdict,
-          score:        result.score,
-          signals:      result.signals,
-          breakdown:    result.breakdown,
-          expectedDays: result.expectedDays ?? undefined,
+          verdict:       result.verdict,
+          score:         result.score,
+          signals:       result.signals,
+          breakdown:     result.breakdown,
+          expectedDays:  result.expectedDays ?? undefined,
+          weightedScore: result.weightedScore,
+          scanSource:    'phone',
         };
-        setCandidates([...updated]);
-      } catch { /* keep current card data */ }
+        if (isMounted.current) setCandidates([...updated]);
+      } catch { /* keep placeholder card */ }
     }
 
+    if (!isMounted.current) return;
     const now = Date.now();
     saveCandidatesCache(JSON.stringify(updated)).catch(() => {});
     setCachedAt(now);
-  }, [scoutTab, loadFromCache, showToast]);
+  }, [loadFromCache, showToast]);
 
-  // ── PC reachability check ─────────────────────────────────────────────────────
+  // ── PC reachability check ─────────────────────────────────────────────────
   const checkPcServer = useCallback(async (url: string): Promise<boolean> => {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 4000);
     try {
-      const controller = new AbortController();
-      const t = setTimeout(() => controller.abort(), 4000);
       const res = await fetch(url.endsWith('/') ? url + 'health' : url + '/health', {
         signal: controller.signal,
       });
-      clearTimeout(t);
       return res.ok;
     } catch {
       return false;
+    } finally {
+      clearTimeout(t);
     }
   }, []);
 
-  // ── Reload button — respects current mode ────────────────────────────────────
-  // Live mode  → check PC server first; Alert if unreachable, then fetch
-  // Local mode → read from SQLite cache only (auto-refresh timer fetches live)
+  // ── Reload button ─────────────────────────────────────────────────────────
   const handleReload = useCallback(async () => {
     pulse.check();
 
@@ -179,36 +218,39 @@ export default function ScoutScreen() {
       return;
     }
 
-    // Live mode — if PC URL is set, check reachability first
-    // PC reachable → fetch normally
-    // PC unreachable → phone fetches directly from Yahoo Finance (silent fallback)
     if (pcServerUrl) {
       const up = await checkPcServer(pcServerUrl);
-      if (!up) {
-        showToast('PC offline — fetching directly from phone');
-      }
+      if (!up) showToast('PC offline — fetching directly from phone');
     }
 
     loadLive();
   }, [pulse, mode, pcServerUrl, checkPcServer, loadLive, loadFromCache, showToast]);
 
-  // ── Auto-refresh interval ─────────────────────────────────────────────────────
+  // ── Auto-refresh interval ─────────────────────────────────────────────────
   const changeInterval = useCallback(async (mins: number) => {
     setIntervalMins(mins);
     await setScanIntervalMins(mins).catch(() => {});
   }, []);
 
+  useEffect(() => { loadLiveRef.current = loadLive; }, [loadLive]);
+
   useEffect(() => {
     if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
     if (intervalMins > 0) {
-      intervalRef.current = setInterval(() => { loadLive(); }, intervalMins * 60_000);
+      intervalRef.current = setInterval(() => { loadLiveRef.current(); }, intervalMins * 60_000);
     }
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [intervalMins, loadLive]);
+  }, [intervalMins]);
 
-  // ── On mount: load settings, then try live / fallback to cache ───────────────
+  // ── Unmount cleanup ───────────────────────────────────────────────────────
+  useEffect(() => () => {
+    isMounted.current = false;
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+  }, []);
+
+  // ── On mount: load settings → try cache → start live scan ────────────────
   useEffect(() => {
     Promise.all([
       getScanIntervalMins().catch(() => 0),
@@ -220,18 +262,10 @@ export default function ScoutScreen() {
 
     loadFromCache().then(ok => {
       if (ok) setMode('CACHED');
-      loadLive();           // always try live on mount
+      loadLive();
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Re-load when tab switches
-  useEffect(() => { loadLive(); }, [scoutTab]);   // eslint-disable-line
-
-  const approved = useMemo(
-    () => candidates.filter(c => c.verdict.status === 'APPROVED').length,
-    [candidates]
-  );
 
   const isCached = mode === 'CACHED';
 
@@ -302,12 +336,14 @@ export default function ScoutScreen() {
               {refreshing ? 'Scanning…' : isCached ? 'Cached' : 'Live'}
             </Text>
           </View>
-          <View style={s.divider} />
+          <View style={s.metaDivider} />
           <View style={s.metaPiece}>
             <Text style={s.metaLabel}>Universe</Text>
-            <Text style={[s.metaValue, isCached && s.metaValueCached]}>NIFTY 500</Text>
+            <Text style={[s.metaValue, isCached && s.metaValueCached]}>
+              {candidates.length > 0 ? `${candidates.length} stocks` : 'NIFTY 500'}
+            </Text>
           </View>
-          <View style={s.divider} />
+          <View style={s.metaDivider} />
           <View style={s.metaPiece}>
             <Text style={s.metaLabel}>Cleared</Text>
             <Text style={[s.metaValue, isCached && s.metaValueCached]}>{approved}/{candidates.length}</Text>
@@ -332,7 +368,7 @@ export default function ScoutScreen() {
           </View>
         </View>
 
-        {/* Segmented control */}
+        {/* Segmented control — Swing Picks / Intraday Picks */}
         <View style={s.segmented}>
           {(['momentum', 'value'] as ScoutTab[]).map(tab => (
             <Pressable
@@ -341,22 +377,31 @@ export default function ScoutScreen() {
               onPress={() => setScoutTab(tab)}
             >
               <Text style={[s.segLabel, scoutTab === tab && s.segLabelActive]}>
-                {tab === 'momentum' ? 'Short-Term' : 'Long-Term'}
+                {tab === 'momentum' ? 'Swing Picks' : 'Intraday Picks'}
               </Text>
               <Text style={[s.segCount, scoutTab === tab && s.segLabelActive]}>
-                {tab === 'momentum' ? SCOUT_MOMENTUM.length : SCOUT_VALUE.length}
+                {tab === 'momentum' ? swingCleared : intradayCleared}
               </Text>
             </Pressable>
           ))}
         </View>
 
-        {candidates.map(c => (
+        {candidates.length === 0 && refreshing && (
+          <View style={s.emptyState}>
+            <ActivityIndicator size="large" color={Colors.accent} />
+            <Text style={s.emptyStateText}>Scanning Nifty 500…</Text>
+          </View>
+        )}
+
+        {displayCandidates.map(c => (
           <StockCard key={c.ticker} data={c} onPress={handleCardPress} />
         ))}
 
-        <Text style={s.footnote}>
-          Notes by Claude Finance Agent · executions stay manual on Groww.
-        </Text>
+        {candidates.length > 0 && (
+          <Text style={s.footnote}>
+            {candidates.length} stocks scanned from Nifty 500 · executions stay manual on Groww.
+          </Text>
+        )}
         <View style={{ height: 24 }} />
       </ScrollView>
 
@@ -364,7 +409,9 @@ export default function ScoutScreen() {
         stock={selectedStock}
         strategyType={scoutTab === 'momentum' ? 'SHORT_TERM' : 'LONG_TERM'}
         onClose={() => setSelectedStock(null)}
-        onCommit={pos => { commitPosition(pos); setSelectedStock(null); }}
+        onCommit={pos => {
+          commitPosition(pos).catch(() => showToast('Failed to save position — try again'));
+        }}
       />
     </SafeAreaView>
   );
@@ -418,11 +465,9 @@ const s = StyleSheet.create({
                     textTransform: 'uppercase', letterSpacing: 0.8 },
   metaValue:      { fontFamily: Fonts.mono, fontSize: 11, color: Colors.ink },
   metaValueCached:{ color: Colors.sepia },
-  divider:        { width: 1, height: 18, backgroundColor: Colors.hair, alignSelf: 'center' },
+  metaDivider:    { width: 1, height: 18, backgroundColor: Colors.hair, alignSelf: 'center' },
 
-  // Auto-refresh interval picker
-  intervalRow:  { flexDirection: 'row', alignItems: 'center', gap: 8,
-                  marginBottom: Space.sm },
+  intervalRow:  { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: Space.sm },
   intervalLabel:{ fontFamily: Fonts.mono, fontSize: 9.5, color: Colors.muted,
                   textTransform: 'uppercase', letterSpacing: 0.8 },
   intervalPills:{ flexDirection: 'row', gap: 4, flex: 1 },
@@ -441,6 +486,9 @@ const s = StyleSheet.create({
   segLabel:     { fontFamily: Fonts.mono, fontSize: 12, color: Colors.muted },
   segLabelActive:{ color: Colors.ink, fontWeight: '500' },
   segCount:     { fontFamily: Fonts.mono, fontSize: 10, color: Colors.muted2 },
+
+  emptyState:     { alignItems: 'center', paddingVertical: 48, gap: 12 },
+  emptyStateText: { fontFamily: Fonts.mono, fontSize: 12, color: Colors.muted },
 
   footnote: { fontFamily: Fonts.mono, fontSize: 10.5, color: Colors.muted2,
               textAlign: 'center', marginTop: Space.sm },
