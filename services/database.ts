@@ -1,5 +1,6 @@
 import * as SQLite from 'expo-sqlite';
 import { Position, StrategyType, PositionStatus, CalendarEntry, CalendarEntryType } from '../types';
+import { NiftyStock } from '../data/nifty500';
 
 let db: SQLite.SQLiteDatabase;
 
@@ -40,6 +41,13 @@ export async function initDatabase() {
       date   TEXT PRIMARY KEY,   -- YYYY-MM-DD IST
       type   TEXT NOT NULL,      -- 'HOLIDAY' | 'SPECIAL_TRADING'
       label  TEXT NOT NULL DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS nifty_universe (
+      ticker      TEXT PRIMARY KEY,
+      name        TEXT NOT NULL,
+      sector      TEXT NOT NULL,
+      is_nifty100 INTEGER NOT NULL DEFAULT 0
     );
   `);
 
@@ -212,6 +220,47 @@ export async function getUpcomingTradingCalendar(
     [fromDate, limit]
   );
   return rows.map(r => ({ date: r.date, type: r.type as CalendarEntryType, label: r.label }));
+}
+
+// ── Nifty universe cache ──────────────────────────────────────────────────────
+
+export async function saveNiftyUniverse(
+  stocks:        NiftyStock[],
+  top100Tickers: Set<string>,
+): Promise<void> {
+  await db.withTransactionAsync(async () => {
+    await db.runAsync('DELETE FROM nifty_universe');
+    for (const s of stocks) {
+      await db.runAsync(
+        'INSERT INTO nifty_universe (ticker, name, sector, is_nifty100) VALUES (?, ?, ?, ?)',
+        [s.ticker, s.name, s.sector, top100Tickers.has(s.ticker) ? 1 : 0],
+      );
+    }
+  });
+  await db.runAsync(
+    `INSERT OR REPLACE INTO app_state (key, value) VALUES ('nifty_universe_cached_at', ?)`,
+    [Date.now().toString()],
+  );
+}
+
+export async function getNiftyUniverseFromDb(): Promise<{
+  stocks:       NiftyStock[];
+  top100Stocks: NiftyStock[];
+  cachedAt:     number | null;
+}> {
+  const [rows, tsRow] = await Promise.all([
+    db.getAllAsync<{ ticker: string; name: string; sector: string; is_nifty100: number }>(
+      'SELECT ticker, name, sector, is_nifty100 FROM nifty_universe',
+    ),
+    db.getFirstAsync<{ value: string }>(
+      `SELECT value FROM app_state WHERE key = 'nifty_universe_cached_at'`,
+    ),
+  ]);
+  const stocks       = rows.map(r => ({ ticker: r.ticker, name: r.name, sector: r.sector }));
+  const top100Stocks = rows
+    .filter(r => r.is_nifty100 === 1)
+    .map(r => ({ ticker: r.ticker, name: r.name, sector: r.sector }));
+  return { stocks, top100Stocks, cachedAt: tsRow ? parseInt(tsRow.value, 10) : null };
 }
 
 function toPosition(row: Record<string, unknown>): Position {

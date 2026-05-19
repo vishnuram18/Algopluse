@@ -6,6 +6,7 @@ import {
 import { Colors, Fonts, Space, Radii } from '../../theme/tokens';
 import { ScoutCandidate, ScoutTab } from '../../types';
 import { PHONE_SCAN_UNIVERSE, NiftyStock } from '../../data/nifty500';
+import { getNiftyUniverse, UniverseSource } from '../../services/niftyUniverseService';
 import { getBatchPrices } from '../../services/marketData';
 import { analyseStock } from '../../services/stockAnalysis';
 import {
@@ -74,12 +75,15 @@ export default function ScoutScreen() {
   const pulse       = useConnectionPulse();
   const userProfile = useAppStore(s => s.userProfile);
 
-  const candidatesRef = useRef(candidates);
-  const intervalRef   = useRef<ReturnType<typeof setInterval> | null>(null);
-  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isMounted     = useRef(true);
-  const loadLiveRef   = useRef<() => Promise<void>>(async () => {});
-  candidatesRef.current = candidates;
+  const [universeSource, setUniverseSource] = useState<UniverseSource>('fallback');
+
+  const candidatesRef    = useRef(candidates);
+  const intervalRef      = useRef<ReturnType<typeof setInterval> | null>(null);
+  const toastTimerRef    = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isMounted        = useRef(true);
+  const loadLiveRef      = useRef<() => Promise<void>>(async () => {});
+  const scanUniverseRef  = useRef<NiftyStock[]>(PHONE_SCAN_UNIVERSE);
+  candidatesRef.current  = candidates;
 
   const showToast = useCallback((msg: string) => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
@@ -127,7 +131,8 @@ export default function ScoutScreen() {
     setCandidates([]);
     setRefreshing(true);
 
-    const allTickers = PHONE_SCAN_UNIVERSE.map(s => s.ticker);
+    const universe   = scanUniverseRef.current;
+    const allTickers = universe.map(s => s.ticker);
     const prices = await getBatchPrices(allTickers).catch(() => ({}));
     if (!isMounted.current) return;
 
@@ -148,7 +153,7 @@ export default function ScoutScreen() {
     }
 
     // Build initial placeholders for stocks that have a live price
-    const initialCandidates: ScoutCandidate[] = PHONE_SCAN_UNIVERSE
+    const initialCandidates: ScoutCandidate[] = universe
       .filter(s => (priceMap[s.ticker] ?? 0) > 0)
       .map(s => makePlaceholder(s, priceMap[s.ticker]));
 
@@ -250,7 +255,7 @@ export default function ScoutScreen() {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
   }, []);
 
-  // ── On mount: load settings → try cache → start live scan ────────────────
+  // ── On mount: load settings → fetch universe → try cache → live scan ────
   useEffect(() => {
     Promise.all([
       getScanIntervalMins().catch(() => 0),
@@ -260,9 +265,17 @@ export default function ScoutScreen() {
       setPcServerUrl_(url);
     });
 
-    loadFromCache().then(ok => {
-      if (ok) setMode('CACHED');
-      loadLive();
+    // Fetch universe from NSE (or cache/fallback), then start scan
+    getNiftyUniverse().then(({ top100, source }) => {
+      scanUniverseRef.current = top100;
+      setUniverseSource(source);
+      if (source === 'live')     showToast(`Stock list updated — ${top100.length} stocks from NSE`);
+      if (source === 'fallback') showToast('Using offline stock list');
+    }).catch(() => {}).finally(() => {
+      loadFromCache().then(ok => {
+        if (ok) setMode('CACHED');
+        loadLive();
+      });
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -340,7 +353,7 @@ export default function ScoutScreen() {
           <View style={s.metaPiece}>
             <Text style={s.metaLabel}>Universe</Text>
             <Text style={[s.metaValue, isCached && s.metaValueCached]}>
-              {candidates.length > 0 ? `${candidates.length} stocks` : 'NIFTY 500'}
+              {`${scanUniverseRef.current.length} · ${universeSource === 'live' ? 'NSE live' : universeSource === 'cached' ? 'NSE cache' : 'offline'}`}
             </Text>
           </View>
           <View style={s.metaDivider} />
