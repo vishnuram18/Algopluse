@@ -125,10 +125,12 @@ class LiveDayTradeScanner {
         })
       );
 
+      type EnrichedItem = { shocker: VolumeShocker; rsi: number | null; price: number };
+
       // 4. Apply trigger logic, then run Claude sentiment check
       const sentimentTasks = enriched
-        .filter(r => r.status === 'fulfilled')
-        .map(r => (r as PromiseFulfilledResult<typeof enriched[0] extends PromiseFulfilledResult<infer T> ? T : never>).value)
+        .filter((r): r is PromiseFulfilledResult<EnrichedItem> => r.status === 'fulfilled')
+        .map(r => r.value)
         .filter(({ rsi }) => rsi !== null)
         .flatMap(({ shocker, rsi, price }) => {
           const signal = classifySignal(shocker, rsi!);

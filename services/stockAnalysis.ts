@@ -114,6 +114,78 @@ function calculateBollinger(closes: number[], period = 20): BollingerResult | nu
   };
 }
 
+// ── Phase 4: Price pattern detection ─────────────────────────────────────────
+
+interface SupportResistanceResult {
+  supportLevels:    number[];
+  resistanceLevels: number[];
+}
+
+function detectSupportResistance(
+  bars:         OHLCBar[],
+  currentPrice: number,
+  lookback    = 60,
+): SupportResistanceResult {
+  const slice = bars.slice(-lookback);
+  const n     = slice.length;
+
+  const pivotHighs: number[] = [];
+  const pivotLows:  number[] = [];
+  for (let i = 1; i < n - 1; i++) {
+    if (slice[i].high > slice[i - 1].high && slice[i].high > slice[i + 1].high)
+      pivotHighs.push(slice[i].high);
+    if (slice[i].low  < slice[i - 1].low  && slice[i].low  < slice[i + 1].low)
+      pivotLows.push(slice[i].low);
+  }
+
+  function cluster(pivots: number[]): number[] {
+    if (pivots.length === 0) return [];
+    const sorted = [...pivots].sort((a, b) => a - b);
+    const groups: number[][] = [[sorted[0]]];
+    for (let i = 1; i < sorted.length; i++) {
+      const last = groups[groups.length - 1];
+      const avg  = last.reduce((a, b) => a + b, 0) / last.length;
+      if (Math.abs(sorted[i] - avg) / avg <= 0.015) {
+        last.push(sorted[i]);
+      } else {
+        groups.push([sorted[i]]);
+      }
+    }
+    return groups
+      .filter(g => g.length >= 3)
+      .map(g => Math.round((g.reduce((a, b) => a + b, 0) / g.length) * 100) / 100);
+  }
+
+  return {
+    supportLevels:    cluster(pivotLows).filter(l => l < currentPrice),
+    resistanceLevels: cluster(pivotHighs).filter(l => l > currentPrice * 0.97),
+  };
+}
+
+function detectBreakout(
+  bars:             OHLCBar[],
+  currentPrice:     number,
+  volumes:          number[],
+  resistanceLevels: number[],
+): boolean {
+  if (resistanceLevels.length === 0 || bars.length < 24 || volumes.length < 21) return false;
+  const avg20 = volumes.slice(-21, -1).reduce((a, b) => a + b, 0) / 20;
+  if (avg20 === 0 || volumes[volumes.length - 1] / avg20 < 1.5) return false;
+  const prevClose    = bars[bars.length - 4].close;
+  const last3Closes  = bars.slice(-3).map(b => b.close);
+  return resistanceLevels.some(level =>
+    prevClose < level && last3Closes.some(c => c > level),
+  );
+}
+
+function detectConsolidation(bars: OHLCBar[], lookback = 20): boolean {
+  if (bars.length < lookback * 2) return false;
+  const currentAtr = calcATR(bars.slice(-lookback));
+  const priorAtr   = calcATR(bars.slice(-lookback * 2, -lookback));
+  if (!currentAtr || !priorAtr || priorAtr === 0) return false;
+  return currentAtr / priorAtr < 0.7;
+}
+
 // ── Data fetchers ─────────────────────────────────────────────────────────────
 
 interface ExtendedBar extends OHLCBar { volume: number }
@@ -176,15 +248,17 @@ async function fetchFundamentals(ticker: string): Promise<Fundamentals> {
 // ── Weighted scoring (0–100) ──────────────────────────────────────────────────
 
 function computeSwingScore(
-  rsi:        number | null,
-  macd:       MacdResult | null,
-  ema20:      number | null,
-  ema50:      number | null,
-  sma200:     number | null,
-  volumes:    number[],
-  pe:         number | null,
-  industryPe: number,
-  yoyGrowthPct: number | null,  // percentage (e.g. 15.2 = 15.2%)
+  rsi:           number | null,
+  macd:          MacdResult | null,
+  ema20:         number | null,
+  ema50:         number | null,
+  sma200:        number | null,
+  volumes:       number[],
+  pe:            number | null,
+  industryPe:    number,
+  yoyGrowthPct:  number | null,  // percentage (e.g. 15.2 = 15.2%)
+  currentPrice:  number,
+  supportLevels: number[],
 ): number {
   let score = 0;
 
@@ -230,15 +304,24 @@ function computeSwingScore(
     else if (yoyGrowthPct > 0) score += 5;
   }
 
-  // Support proximity is Phase 4 — not scored yet (max 15 reserved)
+  // Support proximity (max 15): price within X% above nearest support
+  if (supportLevels.length > 0 && currentPrice > 0) {
+    const nearest = supportLevels.reduce((prev, curr) =>
+      Math.abs(curr - currentPrice) < Math.abs(prev - currentPrice) ? curr : prev
+    );
+    const pct = ((currentPrice - nearest) / currentPrice) * 100;
+    if (pct >= 0 && pct <= 1.5) score += 15;
+    else if (pct > 0 && pct <= 3) score += 8;
+  }
 
   return Math.min(score, 100);
 }
 
 function computeIntradayScore(
-  rsi:     number | null,
-  volumes: number[],
-  macd:    MacdResult | null,
+  rsi:        number | null,
+  volumes:    number[],
+  macd:       MacdResult | null,
+  isBreakout: boolean,
 ): number {
   let score = 0;
 
@@ -266,9 +349,10 @@ function computeIntradayScore(
     else if (macd.histogram > 0)                  score += 15;
   }
 
-  // Breakout detection is Phase 4 — not scored yet (max 20 reserved)
+  // Breakout (max 20)
+  if (isBreakout) score += 20;
 
-  return Math.min(score, 80);  // 80 max until Phase 4 adds breakout points
+  return Math.min(score, 100);
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -322,11 +406,15 @@ export async function analyseStock(
   const growthPositive = yoyGrowth !== null && yoyGrowth > 0;
   const score = [rsiOversold, aboveSma200, cheapPe, growthPositive].filter(Boolean).length;
 
+  // ── Phase 4: pattern detection ──
+  const { supportLevels, resistanceLevels } = detectSupportResistance(bars, currentPrice);
+  const isBreakout     = detectBreakout(bars, currentPrice, volumes, resistanceLevels);
+
   // ── Weighted 0-100 scores ──
   const yoyGrowthPct = yoyGrowth !== null ? yoyGrowth * 100 : null;
   const weightedScore: WeightedScore = {
-    swing:    computeSwingScore(rsi, macd, ema20, ema50, sma200, volumes, pe, industryPe, yoyGrowthPct),
-    intraday: computeIntradayScore(rsi, volumes, macd),
+    swing:    computeSwingScore(rsi, macd, ema20, ema50, sma200, volumes, pe, industryPe, yoyGrowthPct, currentPrice, supportLevels),
+    intraday: computeIntradayScore(rsi, volumes, macd, isBreakout),
   };
 
   const signals: StockSignals = {
