@@ -126,11 +126,103 @@ export default function ScoutScreen() {
     }
   }, []);
 
-  // ── Live fetch — scans PHONE_SCAN_UNIVERSE (top 100 Nifty by market cap) ─
+  // ── PC reachability check ─────────────────────────────────────────────────
+  const checkPcServer = useCallback(async (url: string): Promise<boolean> => {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 4000);
+    try {
+      const res = await fetch(url.endsWith('/') ? url + 'health' : url + '/health', {
+        signal: controller.signal,
+      });
+      return res.ok;
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(t);
+    }
+  }, []);
+
+  // ── PC scan: fetch pre-scored candidates from PC server ──────────────────
+  const loadFromPc = useCallback(async (url: string): Promise<boolean> => {
+    try {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 120_000); // 2 min — PC scan takes ~1 min
+      const base = url.endsWith('/') ? url.slice(0, -1) : url;
+      const res = await fetch(`${base}/api/scan/eod?topN=15`, { signal: controller.signal })
+        .finally(() => clearTimeout(t));
+      if (!res.ok) return false;
+      const data: Array<{
+        ticker: string; name: string; sector: string; price: number;
+        swingScore: number; intradayScore: number;
+        rsi: number | null; ema20: number | null; ema50: number | null;
+        macdHistogram: number | null; scanSource: string;
+      }> = await res.json();
+      if (!Array.isArray(data) || data.length === 0) return false;
+
+      const candidates: ScoutCandidate[] = data.map(d => {
+        const best = Math.max(d.swingScore, d.intradayScore);
+        return {
+          ticker:    d.ticker,
+          name:      d.name,
+          exchange:  'NSE',
+          price:     d.price,
+          currency:  '₹',
+          change:    0,
+          sector:    d.sector,
+          indicator: {
+            label: 'SCORE',
+            value: `${best}/100`,
+            tone:  best >= 70 ? 'accent' : best >= 45 ? 'sepia' : 'muted',
+          },
+          verdict: {
+            status: best >= 70 ? 'APPROVED' : best >= 45 ? 'WATCH' : 'DECLINED',
+            tone:   best >= 70 ? 'approved' : best >= 45 ? 'watch' : 'declined',
+            body:   `PC scan — swing ${d.swingScore}/100 · intraday ${d.intradayScore}/100`,
+          },
+          signals: {
+            rsi: d.rsi, sma200: null, pe: null, industryPe: null, yoyGrowth: null,
+            ema20: d.ema20, ema50: d.ema50,
+            macd: d.macdHistogram != null
+              ? { macdLine: 0, signalLine: 0, histogram: d.macdHistogram }
+              : null,
+            bollinger: null,
+            volumes: [],
+          },
+          weightedScore: { swing: d.swingScore, intraday: d.intradayScore },
+          scanSource: 'pc',
+        };
+      });
+
+      if (!isMounted.current) return false;
+      setCandidates(candidates);
+      setMode('LIVE');
+      setRefreshing(false);
+      const now = Date.now();
+      saveCandidatesCache(JSON.stringify(candidates)).catch(() => {});
+      setCachedAt(now);
+      showToast(`PC scan — ${candidates.length} picks from 200 stocks`);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [showToast]);
+
+  // ── Live fetch — tries PC first, falls back to phone top-100 scan ─────────
   const loadLive = useCallback(async () => {
     setCandidates([]);
     setRefreshing(true);
 
+    // Try PC server if URL is configured
+    if (pcServerUrl) {
+      const pcUp = await checkPcServer(pcServerUrl);
+      if (pcUp) {
+        const ok = await loadFromPc(pcServerUrl);
+        if (ok) return;
+        showToast('PC scan failed — falling back to phone scan');
+      }
+    }
+
+    // Phone fallback: scan universe, keep top 15 that pass the gate
     const universe   = scanUniverseRef.current;
     const allTickers = universe.map(s => s.ticker);
     const prices = await getBatchPrices(allTickers).catch(() => ({}));
@@ -152,66 +244,64 @@ export default function ScoutScreen() {
       return;
     }
 
-    // Build initial placeholders for stocks that have a live price
-    const initialCandidates: ScoutCandidate[] = universe
-      .filter(s => (priceMap[s.ticker] ?? 0) > 0)
-      .map(s => makePlaceholder(s, priceMap[s.ticker]));
-
+    const stocksWithPrice = universe.filter(s => (priceMap[s.ticker] ?? 0) > 0);
     if (isMounted.current) {
-      setCandidates(initialCandidates);
-      setRefreshing(false);
+      setCandidates(stocksWithPrice.map(s => makePlaceholder(s, priceMap[s.ticker])));
       setMode('LIVE');
+      setRefreshing(false);
     }
 
-    // Analyse each stock sequentially, updating cards as results arrive
-    const updated = [...initialCandidates];
-    for (let i = 0; i < updated.length; i++) {
+    // Analyse each stock; collect those that pass the gate, keep best 15
+    const passed: ScoutCandidate[] = [];
+    for (const s of stocksWithPrice) {
       if (!isMounted.current) return;
-      const c = updated[i];
       try {
-        const result = await analyseStock(c.ticker, c.name, c.price, CLAUDE_KEY, c.sector);
-        const ws  = result.weightedScore;
-        const best = Math.max(ws.swing, ws.intraday);
-        updated[i] = {
-          ...c,
-          indicator: {
-            label: 'SCORE',
-            value: `${best}/100`,
-            tone:  best >= 70 ? 'accent' : best >= 45 ? 'sepia' : 'muted',
-          },
-          verdict:       result.verdict,
-          score:         result.score,
-          signals:       result.signals,
-          breakdown:     result.breakdown,
-          expectedDays:  result.expectedDays ?? undefined,
-          weightedScore: result.weightedScore,
-          scanSource:    'phone',
-        };
-        if (isMounted.current) setCandidates([...updated]);
-      } catch { /* keep placeholder card */ }
+        const result = await analyseStock(s.ticker, s.name, priceMap[s.ticker], CLAUDE_KEY, s.sector);
+        const ws   = result.weightedScore;
+        if (ws.swing >= 55 || ws.intraday >= 60) {
+          const best = Math.max(ws.swing, ws.intraday);
+          passed.push({
+            ticker:    s.ticker,
+            name:      s.name,
+            exchange:  'NSE',
+            price:     priceMap[s.ticker],
+            currency:  '₹',
+            change:    0,
+            sector:    s.sector,
+            indicator: {
+              label: 'SCORE',
+              value: `${best}/100`,
+              tone:  best >= 70 ? 'accent' : best >= 45 ? 'sepia' : 'muted',
+            },
+            verdict:       result.verdict,
+            score:         result.score,
+            signals:       result.signals,
+            breakdown:     result.breakdown,
+            expectedDays:  result.expectedDays ?? undefined,
+            weightedScore: ws,
+            scanSource:    'phone',
+          });
+          // Sort and trim as we go so the UI shows ranked results live
+          const top15 = [...passed]
+            .sort((a, b) => Math.max(b.weightedScore!.swing, b.weightedScore!.intraday)
+                          - Math.max(a.weightedScore!.swing, a.weightedScore!.intraday))
+            .slice(0, 15);
+          if (isMounted.current) setCandidates(top15);
+        }
+      } catch { /* skip failed ticker */ }
     }
 
     if (!isMounted.current) return;
-    const now = Date.now();
-    saveCandidatesCache(JSON.stringify(updated)).catch(() => {});
-    setCachedAt(now);
-  }, [loadFromCache, showToast]);
+    const top15Final = [...passed]
+      .sort((a, b) => Math.max(b.weightedScore!.swing, b.weightedScore!.intraday)
+                    - Math.max(a.weightedScore!.swing, a.weightedScore!.intraday))
+      .slice(0, 15);
 
-  // ── PC reachability check ─────────────────────────────────────────────────
-  const checkPcServer = useCallback(async (url: string): Promise<boolean> => {
-    const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), 4000);
-    try {
-      const res = await fetch(url.endsWith('/') ? url + 'health' : url + '/health', {
-        signal: controller.signal,
-      });
-      return res.ok;
-    } catch {
-      return false;
-    } finally {
-      clearTimeout(t);
-    }
-  }, []);
+    if (isMounted.current) setCandidates(top15Final);
+    const now = Date.now();
+    saveCandidatesCache(JSON.stringify(top15Final)).catch(() => {});
+    setCachedAt(now);
+  }, [loadFromCache, loadFromPc, checkPcServer, pcServerUrl, showToast]);
 
   // ── Reload button ─────────────────────────────────────────────────────────
   const handleReload = useCallback(async () => {
@@ -223,13 +313,8 @@ export default function ScoutScreen() {
       return;
     }
 
-    if (pcServerUrl) {
-      const up = await checkPcServer(pcServerUrl);
-      if (!up) showToast('PC offline — fetching directly from phone');
-    }
-
     loadLive();
-  }, [pulse, mode, pcServerUrl, checkPcServer, loadLive, loadFromCache, showToast]);
+  }, [pulse, mode, loadLive, loadFromCache, showToast]);
 
   // ── Auto-refresh interval ─────────────────────────────────────────────────
   const changeInterval = useCallback(async (mins: number) => {
@@ -402,7 +487,9 @@ export default function ScoutScreen() {
         {candidates.length === 0 && refreshing && (
           <View style={s.emptyState}>
             <ActivityIndicator size="large" color={Colors.accent} />
-            <Text style={s.emptyStateText}>Scanning Nifty 500…</Text>
+            <Text style={s.emptyStateText}>
+              {pcServerUrl ? 'Trying PC scan…' : `Scanning ${scanUniverseRef.current.length} stocks…`}
+            </Text>
           </View>
         )}
 
