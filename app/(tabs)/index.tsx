@@ -71,6 +71,7 @@ export default function ScoutScreen() {
   const [toast,        setToast]        = useState<string | null>(null);
   const [intervalMins, setIntervalMins] = useState(0);
   const [pcServerUrl,  setPcServerUrl_] = useState('');
+  const [isRetrying,   setIsRetrying]   = useState(false);
 
   const pulse       = useConnectionPulse();
   const userProfile = useAppStore(s => s.userProfile);
@@ -129,7 +130,7 @@ export default function ScoutScreen() {
   // ── PC reachability check ─────────────────────────────────────────────────
   const checkPcServer = useCallback(async (url: string): Promise<boolean> => {
     const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), 4000);
+    const t = setTimeout(() => controller.abort(), 10_000);
     try {
       const res = await fetch(url.endsWith('/') ? url + 'health' : url + '/health', {
         signal: controller.signal,
@@ -208,15 +209,17 @@ export default function ScoutScreen() {
   }, [showToast]);
 
   // ── Live fetch — tries PC first, falls back to phone top-100 scan ─────────
-  const loadLive = useCallback(async () => {
+  // overrideUrl: pass on initial mount to avoid stale-closure race with pcServerUrl state
+  const loadLive = useCallback(async (overrideUrl?: string) => {
+    const url = overrideUrl !== undefined ? overrideUrl : pcServerUrl;
     setCandidates([]);
     setRefreshing(true);
 
     // Try PC server if URL is configured
-    if (pcServerUrl) {
-      const pcUp = await checkPcServer(pcServerUrl);
+    if (url) {
+      const pcUp = await checkPcServer(url);
       if (pcUp) {
-        const ok = await loadFromPc(pcServerUrl);
+        const ok = await loadFromPc(url);
         if (ok) return;
         showToast('PC scan failed — falling back to phone scan');
       }
@@ -316,6 +319,20 @@ export default function ScoutScreen() {
     loadLive();
   }, [pulse, mode, loadLive, loadFromCache, showToast]);
 
+  // ── Retry PC connection (no phone fallback — just checks PC) ─────────────
+  const retryPcConnection = useCallback(async () => {
+    if (!pcServerUrl || isRetrying) return;
+    setIsRetrying(true);
+    const pcUp = await checkPcServer(pcServerUrl);
+    if (pcUp) {
+      const ok = await loadFromPc(pcServerUrl);
+      if (!ok) showToast('PC reachable but scan returned no results');
+    } else {
+      showToast('PC server not reachable — still offline');
+    }
+    setIsRetrying(false);
+  }, [pcServerUrl, isRetrying, checkPcServer, loadFromPc, showToast]);
+
   // ── Auto-refresh interval ─────────────────────────────────────────────────
   const changeInterval = useCallback(async (mins: number) => {
     setIntervalMins(mins);
@@ -341,27 +358,36 @@ export default function ScoutScreen() {
   }, []);
 
   // ── On mount: load settings → fetch universe → try cache → live scan ────
+  // Sequential so pcServerUrl is resolved before loadLive fires (avoids race).
   useEffect(() => {
-    Promise.all([
-      getScanIntervalMins().catch(() => 0),
-      getPcServerUrl().catch(() => ''),
-    ]).then(([mins, url]) => {
+    let cancelled = false;
+    async function init() {
+      const [mins, url] = await Promise.all([
+        getScanIntervalMins().catch(() => 0),
+        getPcServerUrl().catch(() => ''),
+      ]);
+      if (cancelled) return;
       setIntervalMins(mins);
       setPcServerUrl_(url);
-    });
 
-    // Fetch universe from NSE (or cache/fallback), then start scan
-    getNiftyUniverse().then(({ top100, source }) => {
-      scanUniverseRef.current = top100;
-      setUniverseSource(source);
-      if (source === 'live')     showToast(`Stock list updated — ${top100.length} stocks from NSE`);
-      if (source === 'fallback') showToast('Using offline stock list');
-    }).catch(() => {}).finally(() => {
-      loadFromCache().then(ok => {
-        if (ok) setMode('CACHED');
-        loadLive();
-      });
-    });
+      try {
+        const { top100, source } = await getNiftyUniverse();
+        if (!cancelled) {
+          scanUniverseRef.current = top100;
+          setUniverseSource(source);
+          if (source === 'live')     showToast(`Stock list updated — ${top100.length} stocks from NSE`);
+          if (source === 'fallback') showToast('Using offline stock list');
+        }
+      } catch {}
+
+      if (cancelled) return;
+      const ok = await loadFromCache();
+      if (cancelled) return;
+      if (ok) setMode('CACHED');
+      loadLive(url); // pass url directly — state may not have propagated yet
+    }
+    init();
+    return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -465,6 +491,19 @@ export default function ScoutScreen() {
             ))}
           </View>
         </View>
+
+        {/* Retry PC — visible when URL configured and not currently refreshing */}
+        {pcServerUrl !== '' && !refreshing && (
+          <Pressable
+            style={[s.retryPcRow, isRetrying && s.retryPcRowDisabled]}
+            onPress={retryPcConnection}
+            disabled={isRetrying}
+          >
+            <Text style={s.retryPcText}>
+              {isRetrying ? 'Checking PC…' : 'Retry PC connection'}
+            </Text>
+          </Pressable>
+        )}
 
         {/* Segmented control — Swing Picks / Intraday Picks */}
         <View style={s.segmented}>
@@ -592,4 +631,10 @@ const s = StyleSheet.create({
 
   footnote: { fontFamily: Fonts.mono, fontSize: 10.5, color: Colors.muted2,
               textAlign: 'center', marginTop: Space.sm },
+
+  retryPcRow:         { alignItems: 'center', justifyContent: 'center', paddingVertical: 7,
+                        borderRadius: Radii.sm, borderWidth: 1, borderColor: Colors.hair,
+                        marginBottom: Space.sm },
+  retryPcRowDisabled: { opacity: 0.45 },
+  retryPcText:        { fontFamily: Fonts.mono, fontSize: 10.5, color: Colors.muted },
 });
