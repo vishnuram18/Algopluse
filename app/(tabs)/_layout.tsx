@@ -14,6 +14,17 @@ function ScoutIcon({ focused }: { focused: boolean }) {
   );
 }
 
+function BestPickIcon({ focused }: { focused: boolean }) {
+  return (
+    <View style={[ti.wrap, focused && ti.activeWrap]}>
+      {focused && <View style={ti.indicator} />}
+      <Text style={[ti.icon, { color: focused ? Colors.ink : Colors.muted2 }]}>★</Text>
+      <Text style={[ti.label, { color: focused ? Colors.ink : Colors.muted2,
+                                fontWeight: focused ? '500' : '400' }]}>Best</Text>
+    </View>
+  );
+}
+
 function PortfolioIcon({ focused }: { focused: boolean }) {
   const count = useAppStore(s => s.positions.length);
   return (
@@ -51,6 +62,10 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{ tabBarIcon: ({ focused }) => <ScoutIcon focused={focused} /> }}
+      />
+      <Tabs.Screen
+        name="bestpick"
+        options={{ tabBarIcon: ({ focused }) => <BestPickIcon focused={focused} /> }}
       />
       <Tabs.Screen
         name="portfolio"

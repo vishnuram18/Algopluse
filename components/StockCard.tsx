@@ -132,7 +132,7 @@ function StockCard({ data, onPress }: Props) {
           {/* Signal pills row */}
           <View style={s.signalRow}>
             <Text style={[s.scoreDetail]}>
-              S:{ws.swing} · I:{ws.intraday}
+              V:{ws.swing} · E:{ws.intraday}
             </Text>
             {arrow !== '' && (
               <View style={s.signalPill}>

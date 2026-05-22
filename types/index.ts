@@ -39,8 +39,10 @@ export interface BollingerResult {
 }
 
 export interface WeightedScore {
-  swing:    number;  // 0–100
-  intraday: number;  // 0–100
+  swing:           number;  // 0–100 (Graham Value Score for phone scan)
+  intraday:        number;  // 0–100 (Graham Timing Score for phone scan)
+  grahamNumber?:   number;  // Graham Number ₹ (phone scan only)
+  marginOfSafety?: number;  // % below Graham Number (phone scan only)
 }
 
 export interface StockSignals {
