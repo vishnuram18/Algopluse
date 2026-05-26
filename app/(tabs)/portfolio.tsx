@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, ScrollView, StyleSheet, SafeAreaView, Pressable, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, SafeAreaView, Pressable, Alert, Modal } from 'react-native';
 import { Colors, Fonts, Space, Radii } from '../../theme/tokens';
 import { useAppStore } from '../../store/useAppStore';
 import PositionCard from '../../components/PositionCard';
@@ -14,9 +14,10 @@ import { router } from 'expo-router';
 
 export default function PortfolioScreen() {
   const { positions, refreshPrices, alert, dismissAlert } = useAppStore();
-  const [pinging,  setPinging]  = useState(false);
-  const [calBusy,  setCalBusy]  = useState(false);
-  const [driveBusy,setDriveBusy]= useState(false);
+  const [pinging,       setPinging]       = useState(false);
+  const [calBusy,       setCalBusy]       = useState(false);
+  const [driveBusy,     setDriveBusy]     = useState(false);
+  const [showSignOut,   setShowSignOut]   = useState(false);
   const userProfile = useAppStore(s => s.userProfile);
   const setUserProfile = useAppStore(s => s.setUserProfile);
   const [todayEntry,     setTodayEntry]     = useState<CalendarEntry | null>(null);
@@ -39,16 +40,13 @@ export default function PortfolioScreen() {
 
   useEffect(() => { refreshCalendar(); }, [refreshCalendar]);
 
-  const handleLogout = () => {
-    Alert.alert('Sign out?', 'Your local positions and cache will be kept on this device.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Sign out', style: 'destructive', onPress: async () => {
-          await logout();
-          setUserProfile(null);
-          router.replace('/login');
-        },
-      },
-    ]);
+  const handleLogout = () => setShowSignOut(true);
+
+  const confirmLogout = async () => {
+    setShowSignOut(false);
+    await logout();
+    setUserProfile(null);
+    router.replace('/login');
   };
 
   const handleBackup = async () => {
@@ -312,6 +310,27 @@ export default function PortfolioScreen() {
 
         <View style={{ height: 24 }} />
       </ScrollView>
+      {/* ── Sign-out confirmation modal ───────────────────────────── */}
+      <Modal transparent animationType="fade" visible={showSignOut} onRequestClose={() => setShowSignOut(false)}>
+        <Pressable style={s.overlay} onPress={() => setShowSignOut(false)}>
+          <Pressable style={s.dialog} onPress={() => {}}>
+            <Text style={s.dialogTitle}>Sign out?</Text>
+            <Text style={s.dialogMsg}>
+              Your positions and data stay on this device. You can sign back in with your password or fingerprint.
+            </Text>
+            <View style={s.dialogDivider} />
+            <View style={s.dialogRow}>
+              <Pressable style={[s.dialogBtn, s.dialogBtnCancel]} onPress={() => setShowSignOut(false)}>
+                <Text style={s.dialogCancelText}>Cancel</Text>
+              </Pressable>
+              <View style={s.dialogBtnDivider} />
+              <Pressable style={[s.dialogBtn, s.dialogBtnConfirm]} onPress={confirmLogout}>
+                <Text style={s.dialogConfirmText}>Sign out</Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -387,4 +406,23 @@ const s = StyleSheet.create({
   logoutBtn:      { marginTop: Space.sm, paddingVertical: 8, alignItems: 'center' },
   logoutText:     { fontFamily: Fonts.mono, fontSize: 11, color: Colors.muted,
                     textDecorationLine: 'underline' },
+
+  // Sign-out modal
+  overlay:        { flex: 1, backgroundColor: 'rgba(25,25,25,0.45)',
+                    alignItems: 'center', justifyContent: 'center', padding: Space.xl },
+  dialog:         { width: '100%', backgroundColor: Colors.canvas,
+                    borderRadius: Radii.card, borderWidth: 1, borderColor: Colors.hair,
+                    overflow: 'hidden' },
+  dialogTitle:    { fontFamily: Fonts.serifMedium, fontSize: 17, color: Colors.ink,
+                    paddingHorizontal: Space.lg, paddingTop: Space.lg, paddingBottom: 6 },
+  dialogMsg:      { fontSize: 13, color: Colors.muted, lineHeight: 19,
+                    paddingHorizontal: Space.lg, paddingBottom: Space.lg },
+  dialogDivider:  { height: 1, backgroundColor: Colors.hair },
+  dialogRow:      { flexDirection: 'row' },
+  dialogBtn:      { flex: 1, paddingVertical: 14, alignItems: 'center' },
+  dialogBtnCancel:{},
+  dialogBtnConfirm:{},
+  dialogBtnDivider:{ width: 1, backgroundColor: Colors.hair },
+  dialogCancelText: { fontFamily: Fonts.mono, fontSize: 13, color: Colors.muted },
+  dialogConfirmText:{ fontFamily: Fonts.mono, fontSize: 13, color: Colors.danger, fontWeight: '600' },
 });

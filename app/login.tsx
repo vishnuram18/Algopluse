@@ -9,6 +9,7 @@ import {
   isSetup, createAccount, verifyPassword,
   isBiometricsAvailable, loginWithBiometrics, loadSession,
 } from '../services/localAuthService';
+import { importBackup } from '../services/localBackupService';
 import { useAppStore } from '../store/useAppStore';
 
 type Mode = 'checking' | 'create' | 'login';
@@ -95,6 +96,27 @@ export default function LoginScreen() {
       }
     } catch {
       setError('Something went wrong. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleImport() {
+    setError(null);
+    setLoading(true);
+    try {
+      const result = await importBackup();
+      if (result.credentialsRestored) {
+        // Backup had credentials — switch to login mode
+        setMode('login');
+        if (hasBiometrics) tryBiometrics();
+      } else {
+        // Data restored but no credentials in backup — show message, stay on create
+        setError('Data restored. Create an account below to secure it.');
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg !== 'cancelled') setError('Import failed: ' + msg);
     } finally {
       setLoading(false);
     }
@@ -200,6 +222,20 @@ export default function LoginScreen() {
                     ? <ActivityIndicator color="#fff" />
                     : <Text style={s.primaryBtnText}>Create Account</Text>}
                 </Pressable>
+
+                <View style={s.dividerRow}>
+                  <View style={s.dividerLine} />
+                  <Text style={s.dividerText}>or</Text>
+                  <View style={s.dividerLine} />
+                </View>
+
+                <Pressable
+                  style={[s.importBtn, loading && s.btnDisabled]}
+                  onPress={handleImport}
+                  disabled={loading}
+                >
+                  <Text style={s.importBtnText}>Restore from backup</Text>
+                </Pressable>
               </>
             )}
 
@@ -304,4 +340,12 @@ const s = StyleSheet.create({
   secondaryBtn:     { alignItems: 'center', paddingVertical: 8 },
   secondaryBtnText: { fontFamily: Fonts.mono, fontSize: 11, color: Colors.muted2,
                       textDecorationLine: 'underline' },
+
+  dividerRow:  { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  dividerLine: { flex: 1, height: 1, backgroundColor: Colors.hair },
+  dividerText: { fontFamily: Fonts.mono, fontSize: 11, color: Colors.muted2 },
+
+  importBtn:     { borderWidth: 1, borderColor: Colors.hairStrong, borderRadius: Radii.md,
+                   paddingVertical: 12, alignItems: 'center', backgroundColor: Colors.raised },
+  importBtnText: { fontFamily: Fonts.mono, fontSize: 13, color: Colors.ink },
 });
