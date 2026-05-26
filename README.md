@@ -1,168 +1,93 @@
 # AlgoPulse — NSE Stock Advisor
 
-A personal stock analysis system for NSE-listed Indian equities. The mobile app discovers buy candidates from the Nifty 500 universe, scores them with a weighted technical algorithm, and tracks open positions with real-time target / stop-loss alerts.
+A personal stock analysis app for NSE-listed Indian equities. Discovers buy candidates from the
+Nifty 500 universe, scores them with a weighted technical algorithm, tracks open positions, and
+fires real-time target / stop-loss push notifications — even when the app is backgrounded.
 
 ---
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────┐     Tailscale VPN
-│  PC Server (Spring Boot · port 8080) │ ←─────────────────── Phone
-│  • Scans Nifty 200 at market close   │                      (anywhere)
-│  • Sends Telegram alerts             │
-│  • PostgreSQL position database      │
+┌──────────────────────────────────────┐
+│  Firebase Realtime Database          │
+│  • Stores EOD scan results (cloud)   │
+│  • Phone reads cached candidates     │
 └──────────────────────────────────────┘
-
+              ↕  read/write
 ┌──────────────────────────────────────┐
 │  Mobile App (Expo · React Native)    │
-│  • Scout tab — today's picks         │
-│  • Portfolio tab — open positions    │
-│  • Standalone when PC is off         │
+│  • Scout tab  — Swing / Intraday     │
+│  • Portfolio tab — positions + P&L   │
+│  • Background monitor (9:15–15:30)   │
+│  • Local auth (fingerprint + PIN)    │
 └──────────────────────────────────────┘
 ```
 
 **Scan flow:**
-1. Phone pings PC server via Tailscale (`dlr.tail8391d7.ts.net:8080/health`)
-2. If PC is on → `GET /api/scan/eod?topN=15` — PC scans 200 stocks, returns top 15
-3. If PC is off → phone scans top 100 Nifty stocks locally, keeps best 15 that pass the scoring gate
+1. On Scout tab load → check Firebase for a cached EOD scan
+2. If cache is fresh → display immediately
+3. If stale → phone runs its own live scan against the Nifty 500 universe
 
 ---
 
-## Repositories
+## Features
 
-| Repo | Stack |
-|------|-------|
-| `algopulse-mobile` (this repo) | Expo SDK 54, React Native 0.81.5, TypeScript |
-| `Stock advisor` (PC server) | Spring Boot 3.3.5, Java 21, PostgreSQL |
+- **Scout tab** — ranks stocks with Swing and Intraday sub-tabs; all analyzed stocks shown, sorted by score
+- **Portfolio tab** — tracks open positions, live P&L, fires local notifications on target hit or drawdown
+- **Background position monitor** — checks tracked positions every 15 min between 9:15 AM and 3:30 PM IST; exits immediately outside market hours (no battery drain)
+- **Background day-trade scan** — fail-safe scan at three IST checkpoints (9:15, 12:30, 15:30) if the foreground scanner goes quiet
+- **Local authentication** — fingerprint on return visits; username + password on first launch; credentials stored encrypted in SecureStore
+- **Export / Import backup** — full JSON backup includes positions, calendar overrides, candidates cache, and hashed credentials; importing restores everything and redirects to login
+- **Claude AI verdicts** — APPROVED / WATCH / DECLINED verdict with reasoning for each stock
+- **Dynamic universe** — Nifty 500 constituent list fetched from NSE India CSV, cached 7 days in SQLite, static fallback if offline
+- **Market calendar** — respects NSE holidays and special trading days
 
 ---
 
-## Mobile App
-
-### Features
-
-- **Scout tab** — runs EOD scan, shows ranked stock cards with swing / intraday scores (0–100)
-- **Portfolio tab** — tracks open positions, shows P&L, fires local notifications on target or stop-loss hit
-- **Dynamic universe** — Nifty 500 constituent list fetched live from NSE India CSV, cached 7 days in SQLite, static fallback if offline
-- **PC-first scan** — tries PC server first, falls back to phone scan automatically
-- **Auto-refresh** — configurable interval (manual / 5m / 10m / 30m / 1h)
-- **Claude AI verdicts** — each stock gets an APPROVED / WATCH / DECLINED verdict with reasoning
-
-### Tech stack
+## Tech Stack
 
 | Library | Purpose |
 |---------|---------|
-| Expo SDK 54 | Build toolchain, OTA updates |
+| Expo SDK 54 | Build toolchain |
 | expo-router 6 | File-based navigation |
 | expo-sqlite 16 | Local cache (candidates, positions, settings) |
-| Zustand 5 | Global state (portfolio, alerts) |
-| expo-notifications | Local target / stop-loss push alerts |
-| expo-background-fetch | Background scan trigger |
+| expo-secure-store | Encrypted credential storage |
+| expo-local-authentication | Fingerprint / biometric login |
+| expo-crypto | SHA-256 password hashing |
+| expo-background-fetch | Background scan + position monitor |
+| expo-notifications | Local push alerts |
+| Zustand 5 | Global state (portfolio, alerts, session) |
+| Firebase Realtime Database | Cloud EOD scan cache |
 
-### Key services
+---
+
+## Key Services
 
 | File | What it does |
 |------|-------------|
-| `services/stockAnalysis.ts` | RSI, EMA, MACD, Bollinger, ATR, support/resistance, breakout detection, weighted scoring |
+| `services/stockAnalysis.ts` | RSI, EMA, MACD, Bollinger, ATR, support/resistance, weighted scoring |
+| `services/strategyEngine.ts` | Orchestrates full stock scan, returns ranked candidates |
 | `services/niftyUniverseService.ts` | Fetches Nifty 500 / 100 CSVs from NSE India, caches in SQLite |
-| `services/database.ts` | All SQLite operations (candidates cache, positions, universe, settings) |
+| `services/database.ts` | All SQLite operations (candidates, positions, universe, settings) |
 | `services/marketData.ts` | Batch price fetch from Yahoo Finance |
 | `services/liveDayTradeScanner.ts` | Volume shocker detection during market hours |
 | `services/claudeAnalysisService.ts` | Claude API — generates stock verdict |
-| `services/telegramService.ts` | Sends target / stop-loss Telegram alerts from phone |
-| `data/nifty500.ts` | Static fallback universe (200 stocks, offline use only) |
-
-### Setup
-
-```bash
-cd algopulse-mobile
-npm install
-```
-
-Create `.env` in the project root (never commit this file):
-
-```env
-EXPO_PUBLIC_CLAUDE_API_KEY=your_claude_api_key
-EXPO_PUBLIC_TELEGRAM_BOT_TOKEN=your_telegram_bot_token
-```
-
-Start dev server:
-
-```bash
-npx expo start --tunnel
-```
-
-### Build (EAS)
-
-```powershell
-$env:EAS_NO_VCS = "1"
-npx eas build --profile preview --platform android --non-interactive
-```
-
-> On Windows, git may not be in the default shell PATH — `EAS_NO_VCS=1` bypasses the git requirement.
+| `services/localAuthService.ts` | Account creation, SHA-256 hashing, biometric auth, session management |
+| `services/localBackupService.ts` | Export / import JSON backup including encrypted credentials |
+| `services/notifications.ts` | Target-hit and stop-loss push notification helpers |
+| `services/marketCalendarService.ts` | NSE holiday / special trading day calendar |
 
 ---
 
-## PC Server
+## Background Tasks
 
-### Features
+| File | Task name | When it runs |
+|------|-----------|-------------|
+| `tasks/dayTradeScanTask.ts` | `ALGOPULSE_DAY_TRADE_SCAN` | Near 9:15, 12:30, 15:30 IST (±15 min); only if foreground scanner is stale |
+| `tasks/positionMonitorTask.ts` | `ALGOPULSE_POSITION_MONITOR` | Every 15 min; exits immediately outside 9:15–15:30 IST and on holidays |
 
-- `GET /api/scan/eod?topN=N` — scans Nifty 200, returns top N candidates scored by the same algorithm as the mobile app
-- `GET /health` — reachability ping used by the phone
-- `@Scheduled` polling every 15 min during market hours (9:15–15:30 IST) — checks portfolio positions, sends Telegram alerts on target / stop-loss hit
-- 4-hour in-memory cache so repeated phone calls don't re-scan
-
-### Tech stack
-
-| Library | Purpose |
-|---------|---------|
-| Spring Boot 3.3.5 | Web server, scheduling |
-| Java 21+ | Runtime (Java 25 tested) |
-| PostgreSQL | Position database |
-| RestTemplate | Yahoo Finance HTTP calls |
-| Hibernate / JPA | ORM |
-
-### Prerequisites
-
-- Java 21 or higher (`JAVA_HOME` must point to it)
-- PostgreSQL running locally on port 5432
-- Maven 3.9+
-
-### Setup
-
-1. Create the database:
-
-```sql
-CREATE DATABASE algopulse;
-```
-
-2. Set environment variables (do not hardcode tokens):
-
-```powershell
-$env:TELEGRAM_BOT_TOKEN = "your_bot_token"
-$env:JAVA_HOME = "C:\Program Files\Java\jdk-25"
-```
-
-3. Update `src/main/resources/application.properties` if your PostgreSQL password differs from `postgres`.
-
-4. Run:
-
-```powershell
-cd "E:\Stock advisor\Stock advisor"
-mvn clean spring-boot:run
-```
-
-Server starts on `http://localhost:8080`. The first EOD scan call will take ~1–2 minutes (200ms delay per ticker to avoid Yahoo Finance rate limits).
-
-### Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/health` | Returns `{"status":"ok"}` |
-| `GET` | `/api/scan/eod?topN=15` | Runs / returns cached EOD scan |
-| `GET` | `/api/portfolio` | List all tracked positions |
-| `POST` | `/api/portfolio` | Add a new position |
+Both tasks run with `stopOnTerminate: false, startOnBoot: true`.
 
 ---
 
@@ -180,8 +105,6 @@ Each stock gets two independent scores (0–100):
 | Volume surge | 15 | ratio > 3× = 15, > 1.5× = 8 |
 | Support proximity | 15 | within 1.5% of support = 15, within 3% = 8 |
 
-**Gate:** `swingScore >= 55`
-
 ### Intraday Score
 
 | Signal | Max pts | Condition |
@@ -191,20 +114,38 @@ Each stock gets two independent scores (0–100):
 | MACD momentum | 25 | positive + rising = 25, positive = 15 |
 | Breakout | 20 | crossed resistance in last 3 bars with volume ≥ 1.5× avg |
 
-**Gate:** `intradayScore >= 60`
-
-A stock appears in the Scout tab only if it passes at least one gate.
+All analyzed stocks are shown in the Scout tab, sorted by score descending.
 
 ---
 
-## Connectivity (PC ↔ Phone)
+## Setup
 
-Uses **Tailscale** — an encrypted peer-to-peer VPN.
+```bash
+cd algopulse-mobile
+npm install
+```
 
-- PC runs Spring Boot on port 8080, Tailscale keeps it reachable from anywhere (Wi-Fi or mobile data)
-- Phone connects to `http://dlr.tail8391d7.ts.net:8080`
-- When PC is off, the phone detects timeout on `/health` and runs its own scan automatically
-- Set the PC server URL in **Portfolio → Settings** on the phone
+Create `.env` in the project root (never commit this file):
+
+```env
+EXPO_PUBLIC_CLAUDE_API_KEY=your_claude_api_key
+EXPO_PUBLIC_FIREBASE_DB_URL=https://your-project-default-rtdb.firebaseio.com
+```
+
+Start dev server:
+
+```bash
+npx expo start
+```
+
+Scan the QR code in Expo Go or run on a connected Android device.
+
+### Build (EAS)
+
+```powershell
+$env:EAS_NO_VCS = "1"
+npx eas build --profile preview --platform android --non-interactive
+```
 
 ---
 
@@ -215,37 +156,17 @@ Uses **Tailscale** — an encrypted peer-to-peer VPN.
 | OHLCV (1-year daily) | Yahoo Finance unofficial API | Free |
 | Current price | Yahoo Finance `regularMarketPrice` | Free |
 | Nifty 500 universe | NSE India constituent CSV | Free |
+| EOD scan cache | Firebase Realtime Database | Free tier |
 | Stock verdicts | Claude API (Anthropic) | Pay-per-use |
-| Telegram alerts | Telegram Bot API | Free |
-
-Yahoo Finance URL pattern:
-```
-https://query1.finance.yahoo.com/v8/finance/chart/{TICKER}.NS?interval=1d&range=1y
-```
-
-NSE India universe CSVs:
-```
-https://www.niftyindices.com/IndexConstituents/ind_nifty500list.csv
-https://www.niftyindices.com/IndexConstituents/ind_nifty100list.csv
-```
 
 ---
 
 ## Environment Variables
 
-### Mobile (`.env` — never commit)
-
 | Variable | Description |
 |----------|-------------|
 | `EXPO_PUBLIC_CLAUDE_API_KEY` | Claude API key from console.anthropic.com |
-| `EXPO_PUBLIC_TELEGRAM_BOT_TOKEN` | Telegram bot token from @BotFather |
-
-### PC Server (shell environment — never in code)
-
-| Variable | Description |
-|----------|-------------|
-| `TELEGRAM_BOT_TOKEN` | Same Telegram bot token |
-| `TELEGRAM_CHAT_ID` | Your Telegram chat ID (default: configured in properties) |
+| `EXPO_PUBLIC_FIREBASE_DB_URL` | Firebase Realtime Database URL |
 
 ---
 
@@ -255,29 +176,41 @@ https://www.niftyindices.com/IndexConstituents/ind_nifty100list.csv
 algopulse-mobile/
 ├── app/
 │   ├── (tabs)/
-│   │   ├── index.tsx          # Scout tab — EOD scan + display
-│   │   └── portfolio.tsx      # Portfolio tab — positions + P&L
-│   └── modal.tsx
+│   │   ├── index.tsx           # Scout tab — scan results, Swing / Intraday
+│   │   └── portfolio.tsx       # Portfolio tab — positions, P&L, backup
+│   ├── login.tsx               # Local auth (create account / fingerprint / password)
+│   └── _layout.tsx             # Root layout, DB init, task registration
 ├── components/
-│   ├── StockCard.tsx          # Score bar, verdict, EMA dots
-│   ├── HandshakeDrawer.tsx    # Add-to-portfolio bottom sheet
-│   └── AlertBanner.tsx        # Target / stop-loss banner
+│   ├── StockCard.tsx           # Score bar, verdict badge, EMA dots
+│   ├── HandshakeDrawer.tsx     # Add-to-portfolio bottom sheet
+│   └── AlertBanner.tsx         # Target / stop-loss banner
 ├── services/
-│   ├── stockAnalysis.ts       # All technical indicators + scoring
+│   ├── stockAnalysis.ts        # Technical indicators + scoring
+│   ├── strategyEngine.ts       # Full scan orchestration
 │   ├── niftyUniverseService.ts # NSE CSV fetch + SQLite cache
-│   ├── database.ts            # SQLite schema + all queries
-│   ├── marketData.ts          # Yahoo Finance batch price fetch
-│   └── liveDayTradeScanner.ts # Volume shocker scanner
+│   ├── database.ts             # SQLite schema + all queries
+│   ├── marketData.ts           # Yahoo Finance batch price fetch
+│   ├── liveDayTradeScanner.ts  # Volume shocker scanner
+│   ├── claudeAnalysisService.ts # Claude AI verdicts
+│   ├── localAuthService.ts     # Auth: account, biometrics, session
+│   ├── localBackupService.ts   # Export / import JSON backup
+│   ├── notifications.ts        # Push notification helpers
+│   └── marketCalendarService.ts # NSE holiday calendar
+├── tasks/
+│   ├── dayTradeScanTask.ts     # Background fail-safe scan
+│   └── positionMonitorTask.ts  # Background position monitor
 ├── store/
-│   └── useAppStore.ts         # Zustand store (portfolio, alerts)
+│   └── useAppStore.ts          # Zustand store
 ├── data/
-│   └── nifty500.ts            # 200-stock offline fallback universe
+│   └── nifty500.ts             # Static fallback universe
 └── types/
-    └── index.ts               # All shared TypeScript types
+    └── index.ts                # Shared TypeScript types
 ```
 
 ---
 
 ## Disclaimer
 
-This app is a personal analysis tool. Nothing here is financial advice. All trades are executed manually on Groww or any other broker. The developer takes no responsibility for investment decisions made using this software.
+This app is a personal analysis tool. Nothing here is financial advice. All trades are executed
+manually on Groww or any other broker. The developer takes no responsibility for investment
+decisions made using this software.
