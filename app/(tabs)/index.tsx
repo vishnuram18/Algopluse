@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, ScrollView, Pressable, StyleSheet,
-  ActivityIndicator, SafeAreaView, TextInput,
+  ActivityIndicator, SafeAreaView,
 } from 'react-native';
 import { Colors, Fonts, Space, Radii } from '../../theme/tokens';
 import { ScoutCandidate, ScoutTab } from '../../types';
@@ -12,7 +12,6 @@ import { analyseGrahamStock } from '../../services/grahamScorer';
 import {
   saveCandidatesCache, getCandidatesCache,
   getScanIntervalMins, setScanIntervalMins,
-  getPcServerUrl, setPcServerUrl,
 } from '../../services/database';
 import { useAppStore } from '../../store/useAppStore';
 import StockCard from '../../components/StockCard';
@@ -71,9 +70,6 @@ export default function ScoutScreen() {
   const [cachedAt,     setCachedAt]     = useState<number | null>(null);
   const [toast,        setToast]        = useState<string | null>(null);
   const [intervalMins, setIntervalMins] = useState(0);
-  const [pcServerUrl,    setPcServerUrl_]  = useState('');
-  const [pcUrlDraft,     setPcUrlDraft]    = useState('');
-  const [isRetrying,     setIsRetrying]    = useState(false);
 
   const pulse       = useConnectionPulse();
   const userProfile = useAppStore(s => s.userProfile);
@@ -101,19 +97,11 @@ export default function ScoutScreen() {
 
   const displayCandidates = useMemo(() => {
     const key = scoutTab === 'momentum' ? 'swing' : 'intraday';
-    const sorted = [...candidates].sort((a, b) => {
+    return [...candidates].sort((a, b) => {
       const sa = a.weightedScore?.[key] ?? 0;
       const sb = b.weightedScore?.[key] ?? 0;
       return sb - sa;
     });
-    // Exclude the #1 overall pick (shown on Best Pick tab) — but only when 2+ stocks qualify
-    if (sorted.length <= 1) return sorted;
-    const topTicker = candidates.reduce((best, c) => {
-      const scoreA = Math.max(c.weightedScore?.swing ?? 0, c.weightedScore?.intraday ?? 0);
-      const scoreB = Math.max(best.weightedScore?.swing ?? 0, best.weightedScore?.intraday ?? 0);
-      return scoreA > scoreB ? c : best;
-    }).ticker;
-    return sorted.filter(c => c.ticker !== topTicker);
   }, [candidates, scoutTab]);
 
   // ── Qualified counts for segmented control ────────────────────────────────
@@ -136,91 +124,8 @@ export default function ScoutScreen() {
     }
   }, []);
 
-  // ── PC reachability check ─────────────────────────────────────────────────
-  const checkPcServer = useCallback(async (url: string): Promise<boolean> => {
-    const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), 10_000);
-    try {
-      const res = await fetch(url.endsWith('/') ? url + 'health' : url + '/health', {
-        signal: controller.signal,
-      });
-      return res.ok;
-    } catch {
-      return false;
-    } finally {
-      clearTimeout(t);
-    }
-  }, []);
-
-  // ── PC scan: fetch pre-scored candidates from PC server ──────────────────
-  const loadFromPc = useCallback(async (url: string): Promise<boolean> => {
-    try {
-      const controller = new AbortController();
-      const t = setTimeout(() => controller.abort(), 180_000); // 3 min — PC scan of 200 stocks
-      const base = url.endsWith('/') ? url.slice(0, -1) : url;
-      const res = await fetch(`${base}/api/scan/eod?topN=15`, { signal: controller.signal })
-        .finally(() => clearTimeout(t));
-      if (!res.ok) return false;
-      const data: Array<{
-        ticker: string; name: string; sector: string; price: number;
-        swingScore: number; intradayScore: number;
-        rsi: number | null; ema20: number | null; ema50: number | null;
-        macdHistogram: number | null; scanSource: string;
-      }> = await res.json();
-      if (!Array.isArray(data) || data.length === 0) return false;
-
-      const candidates: ScoutCandidate[] = data.map(d => {
-        const best = Math.max(d.swingScore, d.intradayScore);
-        return {
-          ticker:    d.ticker,
-          name:      d.name,
-          exchange:  'NSE',
-          price:     d.price,
-          currency:  '₹',
-          change:    0,
-          sector:    d.sector,
-          indicator: {
-            label: 'SCORE',
-            value: `${best}/100`,
-            tone:  best >= 70 ? 'accent' : best >= 45 ? 'sepia' : 'muted',
-          },
-          verdict: {
-            status: best >= 70 ? 'APPROVED' : best >= 45 ? 'WATCH' : 'DECLINED',
-            tone:   best >= 70 ? 'approved' : best >= 45 ? 'watch' : 'declined',
-            body:   `PC scan — swing ${d.swingScore}/100 · intraday ${d.intradayScore}/100`,
-          },
-          signals: {
-            rsi: d.rsi, sma200: null, pe: null, industryPe: null, yoyGrowth: null,
-            ema20: d.ema20, ema50: d.ema50,
-            macd: d.macdHistogram != null
-              ? { macdLine: 0, signalLine: 0, histogram: d.macdHistogram }
-              : null,
-            bollinger: null,
-            volumes: [],
-          },
-          weightedScore: { swing: d.swingScore, intraday: d.intradayScore },
-          scanSource: 'pc',
-        };
-      });
-
-      if (!isMounted.current) return false;
-      setCandidates(candidates);
-      setMode('LIVE');
-      setRefreshing(false);
-      const now = Date.now();
-      saveCandidatesCache(JSON.stringify(candidates)).catch(() => {});
-      setCachedAt(now);
-      showToast(`PC scan — ${candidates.length} picks from 200 stocks`);
-      return true;
-    } catch {
-      return false;
-    }
-  }, [showToast]);
-
-  // ── Live fetch — tries PC first, falls back to phone top-100 scan ─────────
-  // overrideUrl: pass on initial mount to avoid stale-closure race with pcServerUrl state
-  const loadLive = useCallback(async (overrideUrl?: string) => {
-    const url = overrideUrl !== undefined ? overrideUrl : pcServerUrl;
+  // ── Live fetch — tries Firebase first, falls back to phone scan ──────────
+  const loadLive = useCallback(async () => {
     setCandidates([]);
     setRefreshing(true);
 
@@ -243,18 +148,7 @@ export default function ScoutScreen() {
       }
     }
 
-    // 2. Try PC server if URL is configured
-    if (url) {
-      const pcUp = await checkPcServer(url);
-      if (pcUp) {
-        showToast('PC server connected');
-        const ok = await loadFromPc(url);
-        if (ok) return;
-        // Market closed or no data — silent fallback, connection already confirmed above
-      }
-    }
-
-    // Phone fallback: scan universe, keep top 15 that pass the gate
+    // 2. Phone fallback: scan universe, keep top 15 that pass the gate
     const universe   = scanUniverseRef.current;
     const allTickers = universe.map(s => s.ticker);
     const prices = await getBatchPrices(allTickers).catch(() => ({}));
@@ -296,35 +190,33 @@ export default function ScoutScreen() {
           const result = await analyseGrahamStock(s.ticker, s.name, priceMap[s.ticker], CLAUDE_KEY, s.sector);
           if (!isMounted.current) return;
           const ws = result.weightedScore;
-          if (ws.swing >= 50) {
-            const best = Math.max(ws.swing, ws.intraday);
-            passed.push({
-              ticker:    s.ticker,
-              name:      s.name,
-              exchange:  'NSE',
-              price:     priceMap[s.ticker],
-              currency:  '₹',
-              change:    0,
-              sector:    s.sector,
-              indicator: {
-                label: 'GRAHAM',
-                value: `${best}/100`,
-                tone:  best >= 70 ? 'accent' : best >= 45 ? 'sepia' : 'muted',
-              },
-              verdict:       result.verdict,
-              score:         result.score,
-              signals:       result.signals,
-              breakdown:     result.breakdown,
-              expectedDays:  result.expectedDays ?? undefined,
-              weightedScore: ws,
-              scanSource:    'phone',
-            });
-            const top15 = [...passed]
-              .sort((a, b) => Math.max(b.weightedScore!.swing, b.weightedScore!.intraday)
-                            - Math.max(a.weightedScore!.swing, a.weightedScore!.intraday))
-              .slice(0, 15);
-            if (isMounted.current) setCandidates(top15);
-          }
+          const best = Math.max(ws.swing, ws.intraday);
+          passed.push({
+            ticker:    s.ticker,
+            name:      s.name,
+            exchange:  'NSE',
+            price:     priceMap[s.ticker],
+            currency:  '₹',
+            change:    0,
+            sector:    s.sector,
+            indicator: {
+              label: 'GRAHAM',
+              value: `${best}/100`,
+              tone:  best >= 70 ? 'accent' : best >= 45 ? 'sepia' : 'muted',
+            },
+            verdict:       result.verdict,
+            score:         result.score,
+            signals:       result.signals,
+            breakdown:     result.breakdown,
+            expectedDays:  result.expectedDays ?? undefined,
+            weightedScore: ws,
+            scanSource:    'phone',
+          });
+          const top15 = [...passed]
+            .sort((a, b) => Math.max(b.weightedScore!.swing, b.weightedScore!.intraday)
+                          - Math.max(a.weightedScore!.swing, a.weightedScore!.intraday))
+            .slice(0, 15);
+          if (isMounted.current) setCandidates(top15);
         } catch { /* skip failed ticker */ }
       }
     };
@@ -341,7 +233,7 @@ export default function ScoutScreen() {
     saveCandidatesCache(JSON.stringify(top15Final)).catch(() => {});
     setCachedAt(now);
     saveFirebaseScan(top15Final).catch(() => {});
-  }, [loadFromCache, loadFromPc, checkPcServer, pcServerUrl, showToast]);
+  }, [loadFromCache, showToast]);
 
   // ── Reload button ─────────────────────────────────────────────────────────
   const handleReload = useCallback(async () => {
@@ -356,31 +248,6 @@ export default function ScoutScreen() {
     loadLive();
   }, [pulse, mode, loadLive, loadFromCache, showToast]);
 
-  // ── Retry PC connection (no phone fallback — just checks PC) ─────────────
-  const retryPcConnection = useCallback(async () => {
-    if (!pcServerUrl || isRetrying) return;
-    setIsRetrying(true);
-    const pcUp = await checkPcServer(pcServerUrl);
-    if (pcUp) {
-      const ok = await loadFromPc(pcServerUrl);
-      if (!ok) showToast('PC reachable but scan returned no results');
-    } else {
-      showToast('PC server not reachable — still offline');
-    }
-    setIsRetrying(false);
-  }, [pcServerUrl, isRetrying, checkPcServer, loadFromPc, showToast]);
-
-  // ── Save PC server URL ────────────────────────────────────────────────────
-  const savePcUrl = useCallback(async () => {
-    const trimmed = pcUrlDraft.trim();
-    await setPcServerUrl(trimmed).catch(() => {});
-    setPcServerUrl_(trimmed);
-    showToast(trimmed ? `PC server URL saved` : 'PC server URL cleared');
-    if (trimmed) {
-      const up = await checkPcServer(trimmed);
-      showToast(up ? 'PC server connected' : 'PC server not reachable — check URL');
-    }
-  }, [pcUrlDraft, checkPcServer, showToast]);
 
   // ── Auto-refresh interval ─────────────────────────────────────────────────
   const changeInterval = useCallback(async (mins: number) => {
@@ -407,18 +274,13 @@ export default function ScoutScreen() {
   }, []);
 
   // ── On mount: load settings → fetch universe → try cache → live scan ────
-  // Sequential so pcServerUrl is resolved before loadLive fires (avoids race).
+  // Sequential so interval is resolved before loadLive fires.
   useEffect(() => {
     let cancelled = false;
     async function init() {
-      const [mins, url] = await Promise.all([
-        getScanIntervalMins().catch(() => 0),
-        getPcServerUrl().catch(() => ''),
-      ]);
+      const mins = await getScanIntervalMins().catch(() => 0);
       if (cancelled) return;
       setIntervalMins(mins);
-      setPcServerUrl_(url);
-      setPcUrlDraft(url);
 
       try {
         const { top100, source } = await getNiftyUniverse();
@@ -434,7 +296,7 @@ export default function ScoutScreen() {
       const ok = await loadFromCache();
       if (cancelled) return;
       if (ok) setMode('CACHED');
-      loadLive(url); // pass url directly — state may not have propagated yet
+      loadLive();
     }
     init();
     return () => { cancelled = true; };
@@ -542,36 +404,6 @@ export default function ScoutScreen() {
           </View>
         </View>
 
-        {/* PC server URL input */}
-        <View style={s.pcUrlRow}>
-          <TextInput
-            style={s.pcUrlInput}
-            value={pcUrlDraft}
-            onChangeText={setPcUrlDraft}
-            placeholder="http://192.168.x.x:8080"
-            placeholderTextColor={Colors.muted2}
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="url"
-          />
-          <Pressable style={s.pcUrlSaveBtn} onPress={savePcUrl}>
-            <Text style={s.pcUrlSaveBtnText}>Save</Text>
-          </Pressable>
-        </View>
-
-        {/* Retry PC — visible when URL configured and not currently refreshing */}
-        {pcServerUrl !== '' && !refreshing && (
-          <Pressable
-            style={[s.retryPcRow, isRetrying && s.retryPcRowDisabled]}
-            onPress={retryPcConnection}
-            disabled={isRetrying}
-          >
-            <Text style={s.retryPcText}>
-              {isRetrying ? 'Checking PC…' : 'Retry PC connection'}
-            </Text>
-          </Pressable>
-        )}
-
         {/* Segmented control — Swing Picks / Intraday Picks */}
         <View style={s.segmented}>
           {(['momentum', 'value'] as ScoutTab[]).map(tab => (
@@ -581,7 +413,7 @@ export default function ScoutScreen() {
               onPress={() => setScoutTab(tab)}
             >
               <Text style={[s.segLabel, scoutTab === tab && s.segLabelActive]}>
-                {tab === 'momentum' ? 'Value Picks' : 'Entry Timing'}
+                {tab === 'momentum' ? 'Swing' : 'Intraday'}
               </Text>
               <Text style={[s.segCount, scoutTab === tab && s.segLabelActive]}>
                 {tab === 'momentum' ? swingCleared : intradayCleared}
@@ -594,7 +426,7 @@ export default function ScoutScreen() {
           <View style={s.emptyState}>
             <ActivityIndicator size="large" color={Colors.accent} />
             <Text style={s.emptyStateText}>
-              {pcServerUrl ? 'Trying PC scan…' : `Scanning ${scanUniverseRef.current.length} stocks…`}
+              {`Scanning ${scanUniverseRef.current.length} stocks…`}
             </Text>
           </View>
         )}
@@ -699,17 +531,4 @@ const s = StyleSheet.create({
   footnote: { fontFamily: Fonts.mono, fontSize: 10.5, color: Colors.muted2,
               textAlign: 'center', marginTop: Space.sm },
 
-  pcUrlRow:        { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: Space.sm },
-  pcUrlInput:      { flex: 1, fontFamily: Fonts.mono, fontSize: 11, color: Colors.ink,
-                     borderWidth: 1, borderColor: Colors.hair, borderRadius: Radii.sm,
-                     paddingHorizontal: 10, paddingVertical: 7, backgroundColor: Colors.raised },
-  pcUrlSaveBtn:    { paddingHorizontal: 12, paddingVertical: 7, borderRadius: Radii.sm,
-                     backgroundColor: Colors.accentSoft, borderWidth: 1, borderColor: Colors.accent },
-  pcUrlSaveBtnText:{ fontFamily: Fonts.mono, fontSize: 11, color: Colors.accentInk, fontWeight: '600' },
-
-  retryPcRow:         { alignItems: 'center', justifyContent: 'center', paddingVertical: 7,
-                        borderRadius: Radii.sm, borderWidth: 1, borderColor: Colors.hair,
-                        marginBottom: Space.sm },
-  retryPcRowDisabled: { opacity: 0.45 },
-  retryPcText:        { fontFamily: Fonts.mono, fontSize: 10.5, color: Colors.muted },
 });

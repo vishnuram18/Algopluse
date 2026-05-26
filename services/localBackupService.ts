@@ -9,6 +9,7 @@ import {
   getCandidatesCache,
   saveCandidatesCache,
 } from './database';
+import { getStoredCredentials, restoreCredentials } from './localAuthService';
 
 const BACKUP_VERSION = 1;
 const FILE_NAME      = `algopulse-backup-${new Date().toISOString().slice(0, 10)}.json`;
@@ -20,6 +21,7 @@ interface BackupPayload {
   positions:        unknown[];
   calendarEntries:  unknown[];
   candidatesCache:  string | null;
+  credentials?:     { username: string; passwordHash: string; salt: string };
 }
 
 // ── Export ────────────────────────────────────────────────────────────────────
@@ -31,6 +33,8 @@ export async function exportBackup(): Promise<void> {
     getCandidatesCache(),
   ]);
 
+  const credentials = await getStoredCredentials().catch(() => null);
+
   const payload: BackupPayload = {
     version:         BACKUP_VERSION,
     appName:         'AlgoPulse',
@@ -38,6 +42,7 @@ export async function exportBackup(): Promise<void> {
     positions,
     calendarEntries,
     candidatesCache: cache?.json ?? null,
+    ...(credentials ? { credentials } : {}),
   };
 
   const path = FileSystem.documentDirectory + FILE_NAME;
@@ -58,9 +63,10 @@ export async function exportBackup(): Promise<void> {
 // ── Import ────────────────────────────────────────────────────────────────────
 
 export interface RestoreResult {
-  positions: number;
-  calendar:  number;
-  message:   string;
+  positions:           number;
+  calendar:            number;
+  message:             string;
+  credentialsRestored: boolean;
 }
 
 export async function importBackup(): Promise<RestoreResult> {
@@ -106,9 +112,18 @@ export async function importBackup(): Promise<RestoreResult> {
     await saveCandidatesCache(payload.candidatesCache).catch(() => {});
   }
 
+  // Restore credentials if present
+  let credentialsRestored = false;
+  const creds = payload.credentials;
+  if (creds?.username && creds?.passwordHash && creds?.salt) {
+    await restoreCredentials(creds).catch(() => {});
+    credentialsRestored = true;
+  }
+
   return {
     positions: posCount,
     calendar:  calCount,
     message:   `Restored ${posCount} position${posCount !== 1 ? 's' : ''} and ${calCount} calendar override${calCount !== 1 ? 's' : ''}.`,
+    credentialsRestored,
   };
 }

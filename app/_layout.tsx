@@ -18,7 +18,7 @@ import { useAppStore } from '../store/useAppStore';
 import { requestPermissions } from '../services/notifications';
 import { liveDayTradeScanner } from '../services/liveDayTradeScanner';
 import { registerDayTradeScanTask } from '../tasks/dayTradeScanTask';
-import { loadPersistedSession } from '../services/authService';
+import { loadSession } from '../services/localAuthService';
 import 'react-native-reanimated';
 
 SplashScreen.preventAutoHideAsync();
@@ -47,7 +47,7 @@ export default function RootLayout() {
       .then(loadPositions)
       .then(async () => {
         // Auth check happens AFTER DB is ready — no race condition
-        const profile = await loadPersistedSession().catch(() => null);
+        const profile = await loadSession().catch(() => null);
         if (profile) setUserProfile(profile);
       })
       .catch(() => {})
