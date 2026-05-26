@@ -18,6 +18,7 @@ import { useAppStore } from '../store/useAppStore';
 import { requestPermissions } from '../services/notifications';
 import { liveDayTradeScanner } from '../services/liveDayTradeScanner';
 import { registerDayTradeScanTask } from '../tasks/dayTradeScanTask';
+import { registerPositionMonitorTask } from '../tasks/positionMonitorTask';
 import { loadSession } from '../services/localAuthService';
 import 'react-native-reanimated';
 
@@ -59,6 +60,7 @@ export default function RootLayout() {
           .then(granted => {
             if (!granted) return;
             registerDayTradeScanTask().catch(() => {});
+            registerPositionMonitorTask().catch(() => {});
             liveDayTradeScanner.start();
           })
           .catch(() => {});
