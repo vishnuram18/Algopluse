@@ -7,7 +7,7 @@ import { router } from 'expo-router';
 import { Colors, Fonts, Radii, Space } from '../theme/tokens';
 import {
   isSetup, createAccount, verifyPassword,
-  isBiometricsAvailable, loginWithBiometrics,
+  isBiometricsAvailable, loginWithBiometrics, loadSession,
 } from '../services/localAuthService';
 import { useAppStore } from '../store/useAppStore';
 
@@ -52,9 +52,9 @@ export default function LoginScreen() {
     }
   }
 
-  function enterApp() {
-    const name = username.trim() || 'User';
-    setUserProfile({ name, email: '', picture: '' });
+  async function enterApp() {
+    const profile = await loadSession().catch(() => null);
+    setUserProfile(profile ?? { name: 'User', email: '', picture: '' });
     router.replace('/(tabs)');
   }
 
@@ -91,10 +91,7 @@ export default function LoginScreen() {
       if (!ok) {
         setError('Incorrect password.');
       } else {
-        const { getItemAsync } = await import('expo-secure-store');
-        const name = (await getItemAsync('algopulse_username')) ?? 'User';
-        setUserProfile({ name, email: '', picture: '' });
-        router.replace('/(tabs)');
+        await enterApp();
       }
     } catch {
       setError('Something went wrong. Please try again.');
