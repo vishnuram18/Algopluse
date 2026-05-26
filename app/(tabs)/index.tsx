@@ -336,11 +336,24 @@ export default function ScoutScreen() {
                     - Math.max(a.weightedScore!.swing, a.weightedScore!.intraday))
       .slice(0, 15);
 
-    if (isMounted.current) setCandidates(top15Final);
-    const now = Date.now();
-    saveCandidatesCache(JSON.stringify(top15Final)).catch(() => {});
-    setCachedAt(now);
-    saveFirebaseScan(top15Final).catch(() => {});
+    if (top15Final.length > 0) {
+      if (isMounted.current) setCandidates(top15Final);
+      const now = Date.now();
+      saveCandidatesCache(JSON.stringify(top15Final)).catch(() => {});
+      setCachedAt(now);
+      saveFirebaseScan(top15Final).catch(() => {});
+    } else {
+      // No stocks passed the quality gate — fall back to cache instead of blanking the screen.
+      const ok = await loadFromCache();
+      if (!isMounted.current) return;
+      if (ok) {
+        setMode('CACHED');
+        showToast('No qualifying picks found — showing last cache');
+      } else {
+        if (isMounted.current) setCandidates([]);
+        showToast('No qualifying picks found');
+      }
+    }
   }, [loadFromCache, loadFromPc, checkPcServer, pcServerUrl, showToast]);
 
   // ── Reload button ─────────────────────────────────────────────────────────

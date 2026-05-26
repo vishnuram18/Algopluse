@@ -185,6 +185,13 @@ function StockCard({ data, onPress }: Props) {
             </Text>
           </View>
         </View>
+      ) : data.indicator.label === 'Scanning' ? (
+        <View style={s.scoreBarRow}>
+          <View style={s.scoreBarTrack} />
+          <View style={[s.scoreChip, s.scoreChipDeclined]}>
+            <Text style={[s.scoreChipText, { color: Colors.muted }]}>—/100</Text>
+          </View>
+        </View>
       ) : null}
 
       {/* Verdict block */}
