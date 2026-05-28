@@ -33,11 +33,13 @@ export async function getBatchPriceDetails(
     tickers.map(async (t) => {
       const data = await fetchChart(t, '1d', '1d');
       const meta = data?.chart?.result?.[0]?.meta ?? {};
-      return {
-        ticker: t,
-        price: (meta.regularMarketPrice ?? 0) as number,
-        changePercent: (meta.regularMarketChangePercent ?? 0) as number,
-      };
+      const price = (meta.regularMarketPrice ?? 0) as number;
+      const prevClose = (meta.chartPreviousClose ?? meta.previousClose ?? 0) as number;
+      // Prefer computing change from actual prices; fall back to API field
+      const changePercent = prevClose > 0
+        ? ((price - prevClose) / prevClose) * 100
+        : (meta.regularMarketChangePercent ?? 0) as number;
+      return { ticker: t, price, changePercent };
     })
   );
   const map: Record<string, PriceDetail> = {};

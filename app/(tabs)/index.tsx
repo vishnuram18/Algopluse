@@ -7,7 +7,7 @@ import { Colors, Fonts, Space, Radii } from '../../theme/tokens';
 import { ScoutCandidate, ScoutTab } from '../../types';
 import { PHONE_SCAN_UNIVERSE, NiftyStock } from '../../data/nifty500';
 import { getNiftyUniverse, UniverseSource } from '../../services/niftyUniverseService';
-import { getBatchPrices } from '../../services/marketData';
+import { getBatchPriceDetails } from '../../services/marketData';
 import { analyseGrahamStock } from '../../services/grahamScorer';
 import {
   saveCandidatesCache, getCandidatesCache,
@@ -151,11 +151,10 @@ export default function ScoutScreen() {
     // 2. Phone fallback: scan universe, keep top 15 that pass the gate
     const universe   = scanUniverseRef.current;
     const allTickers = universe.map(s => s.ticker);
-    const prices = await getBatchPrices(allTickers).catch(() => ({}));
+    const priceDetails = await getBatchPriceDetails(allTickers).catch(() => ({}));
     if (!isMounted.current) return;
 
-    const priceMap = prices as Record<string, number>;
-    const anyPrice = Object.values(priceMap).some(p => p > 0);
+    const anyPrice = Object.values(priceDetails).some(d => d.price > 0);
 
     if (!anyPrice) {
       setRefreshing(false);
@@ -170,9 +169,9 @@ export default function ScoutScreen() {
       return;
     }
 
-    const stocksWithPrice = universe.filter(s => (priceMap[s.ticker] ?? 0) > 0);
+    const stocksWithPrice = universe.filter(s => (priceDetails[s.ticker]?.price ?? 0) > 0);
     if (isMounted.current) {
-      setCandidates(stocksWithPrice.map(s => makePlaceholder(s, priceMap[s.ticker])));
+      setCandidates(stocksWithPrice.map(s => makePlaceholder(s, priceDetails[s.ticker].price)));
       setMode('LIVE');
       setRefreshing(false);
     }
@@ -187,7 +186,8 @@ export default function ScoutScreen() {
         const s = queue.shift();
         if (!s) break;
         try {
-          const result = await analyseGrahamStock(s.ticker, s.name, priceMap[s.ticker], CLAUDE_KEY, s.sector);
+          const detail = priceDetails[s.ticker];
+          const result = await analyseGrahamStock(s.ticker, s.name, detail.price, CLAUDE_KEY, s.sector);
           if (!isMounted.current) return;
           const ws = result.weightedScore;
           const best = Math.max(ws.swing, ws.intraday);
@@ -195,9 +195,9 @@ export default function ScoutScreen() {
             ticker:    s.ticker,
             name:      s.name,
             exchange:  'NSE',
-            price:     priceMap[s.ticker],
+            price:     detail.price,
             currency:  '₹',
-            change:    0,
+            change:    detail.changePercent,
             sector:    s.sector,
             indicator: {
               label: 'GRAHAM',
@@ -212,10 +212,9 @@ export default function ScoutScreen() {
             weightedScore: ws,
             scanSource:    'phone',
           });
-          const top15 = [...passed]
-            .sort((a, b) => Math.max(b.weightedScore!.swing, b.weightedScore!.intraday)
-                          - Math.max(a.weightedScore!.swing, a.weightedScore!.intraday))
-            .slice(0, 15);
+          const blend = (c: ScoutCandidate) =>
+            (c.weightedScore?.swing ?? 0) * 0.35 + (c.weightedScore?.intraday ?? 0) * 0.65;
+          const top15 = [...passed].sort((a, b) => blend(b) - blend(a)).slice(0, 15);
           if (isMounted.current) setCandidates(top15);
         } catch { /* skip failed ticker */ }
       }
@@ -223,10 +222,9 @@ export default function ScoutScreen() {
     await Promise.all(Array.from({ length: 8 }, worker));
 
     if (!isMounted.current) return;
-    const top15Final = [...passed]
-      .sort((a, b) => Math.max(b.weightedScore!.swing, b.weightedScore!.intraday)
-                    - Math.max(a.weightedScore!.swing, a.weightedScore!.intraday))
-      .slice(0, 15);
+    const blendFinal = (c: ScoutCandidate) =>
+      (c.weightedScore?.swing ?? 0) * 0.35 + (c.weightedScore?.intraday ?? 0) * 0.65;
+    const top15Final = [...passed].sort((a, b) => blendFinal(b) - blendFinal(a)).slice(0, 15);
 
     if (isMounted.current) setCandidates(top15Final);
     const now = Date.now();

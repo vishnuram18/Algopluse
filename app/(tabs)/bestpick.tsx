@@ -50,11 +50,11 @@ export default function BestPickScreen() {
       if (!cached) { setTopError('No scan data yet — run the Scout tab first'); return; }
       const candidates: ScoutCandidate[] = JSON.parse(cached.json);
       if (candidates.length === 0) { setTopError('No scan data yet — run the Scout tab first'); return; }
-      const best = candidates.reduce((a, b) => {
-        const sa = Math.max(a.weightedScore?.swing ?? 0, a.weightedScore?.intraday ?? 0);
-        const sb = Math.max(b.weightedScore?.swing ?? 0, b.weightedScore?.intraday ?? 0);
-        return sb > sa ? b : a;
-      });
+      // Weight timing (intraday) 65% over value (swing) 35% — for swing trades
+      // a cheap stock in a downtrend should not beat a trending stock on fundamentals alone.
+      const blend = (c: ScoutCandidate) =>
+        (c.weightedScore?.swing ?? 0) * 0.35 + (c.weightedScore?.intraday ?? 0) * 0.65;
+      const best = candidates.reduce((a, b) => blend(b) > blend(a) ? b : a);
       setTopPick(best);
       setCachedAt(cached.cachedAt);
     } catch {

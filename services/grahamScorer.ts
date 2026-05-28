@@ -169,6 +169,9 @@ function grahamTimingScore(
   volumes: number[],
   bars:    OHLCBar[],
   price:   number,
+  ema50:   number | null,
+  sma200:  number | null,
+  closes:  number[],
 ): number {
   let score = 0;
 
@@ -206,7 +209,29 @@ function grahamTimingScore(
     }
   }
 
-  return Math.min(score, 100);
+  const raw = Math.min(score, 100);
+
+  // Trend alignment multiplier — Graham value in a downtrend is a value trap for swing trades.
+  // Penalise proportionally so poor price action can't be masked by cheap fundamentals.
+  let trendMult = 1.0;
+  if (price > 0) {
+    const belowSma200 = sma200 !== null && price < sma200;
+    const belowEma50  = ema50  !== null && price < ema50;
+    if (belowSma200)       trendMult = 0.45; // sustained downtrend
+    else if (belowEma50)   trendMult = 0.70; // short-term weakness
+  }
+
+  // 1-month momentum bonus/penalty
+  let momentumAdj = 0;
+  if (closes.length >= 21) {
+    const ret = (closes[closes.length - 1] - closes[closes.length - 21]) / closes[closes.length - 21];
+    if (ret > 0.05)       momentumAdj =  8;  // strong positive momentum
+    else if (ret > 0)     momentumAdj =  3;
+    else if (ret < -0.05) momentumAdj = -10; // falling momentum
+    else                  momentumAdj = -4;
+  }
+
+  return Math.max(0, Math.min(100, Math.round(raw * trendMult + momentumAdj)));
 }
 
 // ── Claude Graham Verdict ─────────────────────────────────────────────────────
@@ -317,7 +342,7 @@ export async function analyseGrahamStock(
   const atr    = calcATR(bars);
 
   const gScore = grahamValueScore(gf, currentPrice);
-  const tScore = grahamTimingScore(rsi, macd, volumes, bars, currentPrice);
+  const tScore = grahamTimingScore(rsi, macd, volumes, bars, currentPrice, ema50, sma200, closes);
 
   const marginOfSafety = gf.grahamNumber > 0
     ? ((gf.grahamNumber - currentPrice) / gf.grahamNumber) * 100
