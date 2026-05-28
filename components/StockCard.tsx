@@ -149,13 +149,6 @@ function StockCard({ data, onPress }: Props) {
                 <Text style={s.signalPillText}>EMA</Text>
               </View>
             )}
-            {data.scanSource && (
-              <View style={[s.sourceChip, data.scanSource === 'pc' && s.sourceChipPc]}>
-                <Text style={[s.sourceChipText, data.scanSource === 'pc' && s.sourceChipPcText]}>
-                  {data.scanSource === 'pc' ? 'PC' : 'PHONE'}
-                </Text>
-              </View>
-            )}
           </View>
         </View>
       ) : data.breakdown ? (
