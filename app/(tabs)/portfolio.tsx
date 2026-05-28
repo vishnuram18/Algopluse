@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, ScrollView, StyleSheet, SafeAreaView, Pressable, Alert, Modal } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, SafeAreaView, Pressable, Alert, Modal, TextInput } from 'react-native';
 import { Colors, Fonts, Space, Radii } from '../../theme/tokens';
 import { useAppStore } from '../../store/useAppStore';
 import PositionCard from '../../components/PositionCard';
@@ -18,6 +18,7 @@ export default function PortfolioScreen() {
   const [calBusy,       setCalBusy]       = useState(false);
   const [driveBusy,     setDriveBusy]     = useState(false);
   const [showSignOut,   setShowSignOut]   = useState(false);
+  const [search,        setSearch]        = useState('');
   const userProfile = useAppStore(s => s.userProfile);
   const setUserProfile = useAppStore(s => s.setUserProfile);
   const [todayEntry,     setTodayEntry]     = useState<CalendarEntry | null>(null);
@@ -178,15 +179,42 @@ export default function PortfolioScreen() {
           <Text style={s.sectionMeta}>{positions.length} open · Groww linked</Text>
         </View>
 
+        {positions.length > 0 && (
+          <View style={s.searchWrap}>
+            <Text style={s.searchIcon}>⌕</Text>
+            <TextInput
+              style={s.searchInput}
+              placeholder="Search ticker or name…"
+              placeholderTextColor={Colors.muted2}
+              value={search}
+              onChangeText={setSearch}
+              autoCapitalize="characters"
+              autoCorrect={false}
+              clearButtonMode="while-editing"
+            />
+            {search.length > 0 && (
+              <Pressable onPress={() => setSearch('')} hitSlop={8}>
+                <Text style={s.searchClear}>✕</Text>
+              </Pressable>
+            )}
+          </View>
+        )}
+
         {positions.length === 0 ? (
           <View style={s.empty}>
             <Text style={s.emptyIcon}>▦</Text>
             <Text style={s.emptyTitle}>No positions yet</Text>
             <Text style={s.emptySub}>Tap a stock card on the Scout tab and execute your first handshake.</Text>
           </View>
-        ) : (
-          positions.map(p => <PositionCard key={p.id} position={p} />)
-        )}
+        ) : (() => {
+          const q = search.trim().toLowerCase();
+          const filtered = q
+            ? positions.filter(p => p.ticker.toLowerCase().includes(q) || p.name.toLowerCase().includes(q))
+            : positions;
+          return filtered.length === 0
+            ? <Text style={s.searchEmpty}>No positions match "{search}"</Text>
+            : filtered.map(p => <PositionCard key={p.id} position={p} />);
+        })()}
 
         {/* ── Market Control panel ─────────────────────────────────────── */}
         <View style={s.systemCard}>
@@ -425,4 +453,15 @@ const s = StyleSheet.create({
   dialogBtnDivider:{ width: 1, backgroundColor: Colors.hair },
   dialogCancelText: { fontFamily: Fonts.mono, fontSize: 13, color: Colors.muted },
   dialogConfirmText:{ fontFamily: Fonts.mono, fontSize: 13, color: Colors.danger, fontWeight: '600' },
+
+  searchWrap:  { flexDirection: 'row', alignItems: 'center', gap: 8,
+                 borderWidth: 1, borderColor: Colors.hair, borderRadius: Radii.md,
+                 backgroundColor: Colors.raised, paddingHorizontal: Space.sm,
+                 paddingVertical: 8, marginBottom: Space.md },
+  searchIcon:  { fontSize: 16, color: Colors.muted2 },
+  searchInput: { flex: 1, fontFamily: Fonts.mono, fontSize: 13, color: Colors.ink,
+                 paddingVertical: 0 },
+  searchClear: { fontSize: 11, color: Colors.muted2, paddingHorizontal: 4 },
+  searchEmpty: { fontFamily: Fonts.mono, fontSize: 12, color: Colors.muted,
+                 textAlign: 'center', paddingVertical: Space.xl },
 });

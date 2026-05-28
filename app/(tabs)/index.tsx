@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, ScrollView, Pressable, StyleSheet,
-  ActivityIndicator, SafeAreaView,
+  ActivityIndicator, SafeAreaView, TextInput,
 } from 'react-native';
 import { Colors, Fonts, Space, Radii } from '../../theme/tokens';
 import { ScoutCandidate, ScoutTab } from '../../types';
@@ -70,6 +70,7 @@ export default function ScoutScreen() {
   const [cachedAt,     setCachedAt]     = useState<number | null>(null);
   const [toast,        setToast]        = useState<string | null>(null);
   const [intervalMins, setIntervalMins] = useState(0);
+  const [search,       setSearch]       = useState('');
 
   const pulse       = useConnectionPulse();
   const userProfile = useAppStore(s => s.userProfile);
@@ -96,16 +97,20 @@ export default function ScoutScreen() {
   }, [setSelectedStock]);
 
   const displayCandidates = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const matchSearch = (c: ScoutCandidate) =>
+      !q || c.ticker.toLowerCase().includes(q) || c.name.toLowerCase().includes(q);
+
     if (scoutTab === 'momentum') {
       return [...candidates]
-        .filter(c => (c.weightedScore?.swing ?? 0) >= 35)
+        .filter(c => (c.weightedScore?.swing ?? 0) >= 35 && matchSearch(c))
         .sort((a, b) => (b.weightedScore?.swing ?? 0) - (a.weightedScore?.swing ?? 0));
     } else {
       return [...candidates]
-        .filter(c => (c.weightedScore?.intraday ?? 0) >= 25)
+        .filter(c => (c.weightedScore?.intraday ?? 0) >= 25 && matchSearch(c))
         .sort((a, b) => (b.weightedScore?.intraday ?? 0) - (a.weightedScore?.intraday ?? 0));
     }
-  }, [candidates, scoutTab]);
+  }, [candidates, scoutTab, search]);
 
   // ── Qualified counts for segmented control ────────────────────────────────
   const swingCleared    = useMemo(() => candidates.filter(c => (c.weightedScore?.swing    ?? 0) >= 35).length, [candidates]);
@@ -421,6 +426,26 @@ export default function ScoutScreen() {
           ))}
         </View>
 
+        {/* Search bar */}
+        <View style={s.searchWrap}>
+          <Text style={s.searchIcon}>⌕</Text>
+          <TextInput
+            style={s.searchInput}
+            placeholder="Search ticker or name…"
+            placeholderTextColor={Colors.muted2}
+            value={search}
+            onChangeText={setSearch}
+            autoCapitalize="characters"
+            autoCorrect={false}
+            clearButtonMode="while-editing"
+          />
+          {search.length > 0 && (
+            <Pressable onPress={() => setSearch('')} hitSlop={8}>
+              <Text style={s.searchClear}>✕</Text>
+            </Pressable>
+          )}
+        </View>
+
         {candidates.length === 0 && refreshing && (
           <View style={s.emptyState}>
             <ActivityIndicator size="large" color={Colors.accent} />
@@ -529,5 +554,14 @@ const s = StyleSheet.create({
 
   footnote: { fontFamily: Fonts.mono, fontSize: 10.5, color: Colors.muted2,
               textAlign: 'center', marginTop: Space.sm },
+
+  searchWrap:  { flexDirection: 'row', alignItems: 'center', gap: 8,
+                 borderWidth: 1, borderColor: Colors.hair, borderRadius: Radii.md,
+                 backgroundColor: Colors.raised, paddingHorizontal: Space.sm,
+                 paddingVertical: 8, marginBottom: Space.md },
+  searchIcon:  { fontSize: 16, color: Colors.muted2 },
+  searchInput: { flex: 1, fontFamily: Fonts.mono, fontSize: 13, color: Colors.ink,
+                 paddingVertical: 0 },
+  searchClear: { fontSize: 11, color: Colors.muted2, paddingHorizontal: 4 },
 
 });
