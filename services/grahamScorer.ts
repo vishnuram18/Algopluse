@@ -129,33 +129,45 @@ function findNearestSupport(bars: OHLCBar[], price: number): number | null {
 function grahamValueScore(f: GrahamFundamentals, price: number): number {
   let score = 0;
 
-  // Price vs Graham Number (max 30) — the core Graham margin of safety
+  // P/E ratio (max 25) — India large-caps typically trade at 20–50×
+  if (f.pe > 0) {
+    if (f.pe <= 15)      score += 25;
+    else if (f.pe <= 25) score += 18;
+    else if (f.pe <= 35) score += 10;
+    else if (f.pe <= 50) score += 4;
+  }
+
+  // P/B ratio (max 20) — book value quality
+  if (f.pb > 0) {
+    if (f.pb <= 1.5)     score += 20;
+    else if (f.pb <= 3)  score += 14;
+    else if (f.pb <= 5)  score += 7;
+    else if (f.pb <= 8)  score += 2;
+  }
+
+  // Graham Number margin of safety (max 15) — bonus for deep value
   if (f.grahamNumber > 0) {
     const ratio = price / f.grahamNumber;
-    if (ratio < 0.75)      score += 30;
-    else if (ratio < 0.90) score += 20;
-    else if (ratio < 1.00) score += 10;
+    if (ratio < 0.75)      score += 15;
+    else if (ratio < 1.00) score += 8;
+    else if (ratio < 1.25) score += 3;
   }
 
-  // Blended Multiplier P/E × P/B ≤ 22.5 (max 25) — Graham's exact rule
-  if (f.blended > 0) {
-    if (f.blended <= 10)        score += 25;
-    else if (f.blended <= 22.5) score += 15;
-  }
+  // Current Ratio (max 15) — lowered bar for Indian companies
+  if (f.currentRatio >= 2.0)      score += 15;
+  else if (f.currentRatio >= 1.5) score += 10;
+  else if (f.currentRatio >= 1.0) score += 5;
 
-  // Current Ratio (max 20) — financial strength
-  if (f.currentRatio >= 2.0)      score += 20;
-  else if (f.currentRatio >= 1.5) score += 12;
+  // Debt safety (max 15)
+  if (f.debtToEquity > 0 && f.debtToEquity <= 0.5)  score += 15; // low debt
+  else if (f.debtToEquity <= 1.0)                    score += 10;
+  else if (f.debtToEquity <= 2.0)                    score += 4;
+  else if (f.debtToEquity === 0)                     score += 15; // genuinely debt-free
 
-  // Debt safety (max 15) — conservative balance sheet
-  if (f.debtToEquity === 0)        score += 15; // debt-free
-  else if (f.debtToEquity <= 1.0)  score += 15;
-  else if (f.debtToEquity <= 1.5)  score += 8;
-
-  // Earnings + dividend quality (max 10)
+  // Earnings quality (max 10)
   if (f.eps > 0)          score += 5;
-  if (f.dividendRate > 0) score += 3;
-  if (f.revenue > 0)      score += 2;
+  if (f.revenue > 0)      score += 3;
+  if (f.dividendRate > 0) score += 2;
 
   return Math.min(score, 100);
 }

@@ -103,7 +103,7 @@ export default function ScoutScreen() {
 
     if (scoutTab === 'momentum') {
       return [...candidates]
-        .filter(c => (c.weightedScore?.swing ?? 0) >= 35 && matchSearch(c))
+        .filter(c => (c.weightedScore?.swing ?? 0) >= 25 && matchSearch(c))
         .sort((a, b) => (b.weightedScore?.swing ?? 0) - (a.weightedScore?.swing ?? 0));
     } else {
       return [...candidates]
@@ -113,7 +113,7 @@ export default function ScoutScreen() {
   }, [candidates, scoutTab, search]);
 
   // ── Qualified counts for segmented control ────────────────────────────────
-  const swingCleared    = useMemo(() => candidates.filter(c => (c.weightedScore?.swing    ?? 0) >= 35).length, [candidates]);
+  const swingCleared    = useMemo(() => candidates.filter(c => (c.weightedScore?.swing    ?? 0) >= 25).length, [candidates]);
   const intradayCleared = useMemo(() => candidates.filter(c => (c.weightedScore?.intraday ?? 0) >= 25).length, [candidates]);
   const approved        = useMemo(() => candidates.filter(c => c.verdict.status === 'APPROVED').length, [candidates]);
 
