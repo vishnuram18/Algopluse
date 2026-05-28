@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, LayoutChangeEvent, Pressable, Alert } from 'react-native';
+import { View, Text, StyleSheet, LayoutChangeEvent, Pressable, Modal } from 'react-native';
 import { Colors, Fonts, Radii, Space } from '../theme/tokens';
 import { Position, PositionStatus } from '../types';
 import { useAppStore } from '../store/useAppStore';
@@ -15,26 +15,15 @@ interface Props { position: Position }
 
 export default function PositionCard({ position: p }: Props) {
   const [trackWidth, setTrackWidth] = useState(0);
+  const [showConfirm, setShowConfirm] = useState(false);
   const statusColors   = STATUS_COLORS[p.status];
   const removePosition = useAppStore(s => s.removePosition);
 
-  const handleRemove = () => {
-    Alert.alert(
-      'Mark as Sold',
-      `Remove ${p.ticker} from tracking? This confirms you have sold the position on Groww.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Sold — Remove',
-          style: 'destructive',
-          onPress: () => {
-            removePosition(p.id).catch(() => {
-              Alert.alert('Error', 'Could not remove position. Please try again.');
-            });
-          },
-        },
-      ]
-    );
+  const handleRemove = () => setShowConfirm(true);
+
+  const confirmRemove = () => {
+    setShowConfirm(false);
+    removePosition(p.id).catch(() => {});
   };
   const fmt = (n: number) => n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -122,6 +111,28 @@ export default function PositionCard({ position: p }: Props) {
         <Text style={s.soldBtnText}>Sold on Groww — Remove</Text>
         <Text style={s.soldBtnArrow}>✕</Text>
       </Pressable>
+
+      {/* Confirm remove modal */}
+      <Modal transparent animationType="fade" visible={showConfirm} onRequestClose={() => setShowConfirm(false)}>
+        <Pressable style={s.overlay} onPress={() => setShowConfirm(false)}>
+          <Pressable style={s.dialog} onPress={() => {}}>
+            <Text style={s.dialogTitle}>Mark as sold?</Text>
+            <Text style={s.dialogMsg}>
+              This removes <Text style={s.dialogTicker}>{p.ticker}</Text> from tracking and confirms the position has been closed on Groww.
+            </Text>
+            <View style={s.dialogDivider} />
+            <View style={s.dialogRow}>
+              <Pressable style={s.dialogBtn} onPress={() => setShowConfirm(false)}>
+                <Text style={s.dialogCancelText}>Cancel</Text>
+              </Pressable>
+              <View style={s.dialogBtnDivider} />
+              <Pressable style={s.dialogBtn} onPress={confirmRemove}>
+                <Text style={s.dialogConfirmText}>Sold — Remove</Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -168,4 +179,21 @@ const s = StyleSheet.create({
   soldBtnPressed: { backgroundColor: 'rgba(185,64,48,0.06)', borderColor: Colors.danger },
   soldBtnText:    { fontFamily: Fonts.mono, fontSize: 11, color: Colors.muted },
   soldBtnArrow:   { fontSize: 11, color: Colors.muted2 },
+
+  overlay:          { flex: 1, backgroundColor: 'rgba(25,25,25,0.45)',
+                      alignItems: 'center', justifyContent: 'center', padding: Space.xl },
+  dialog:           { width: '100%', backgroundColor: Colors.canvas,
+                      borderRadius: Radii.card, borderWidth: 1, borderColor: Colors.hair,
+                      overflow: 'hidden' },
+  dialogTitle:      { fontFamily: Fonts.serifMedium, fontSize: 17, color: Colors.ink,
+                      paddingHorizontal: Space.lg, paddingTop: Space.lg, paddingBottom: 6 },
+  dialogMsg:        { fontSize: 13, color: Colors.muted, lineHeight: 19,
+                      paddingHorizontal: Space.lg, paddingBottom: Space.lg },
+  dialogTicker:     { fontFamily: Fonts.monoMedium, color: Colors.ink },
+  dialogDivider:    { height: 1, backgroundColor: Colors.hair },
+  dialogRow:        { flexDirection: 'row' },
+  dialogBtn:        { flex: 1, paddingVertical: 14, alignItems: 'center' },
+  dialogBtnDivider: { width: 1, backgroundColor: Colors.hair },
+  dialogCancelText: { fontFamily: Fonts.mono, fontSize: 13, color: Colors.muted },
+  dialogConfirmText:{ fontFamily: Fonts.mono, fontSize: 13, color: Colors.danger, fontWeight: '600' },
 });
