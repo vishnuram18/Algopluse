@@ -97,17 +97,13 @@ export default function ScoutScreen() {
 
   const displayCandidates = useMemo(() => {
     if (scoutTab === 'momentum') {
-      // Swing tab: stocks with meaningful value score, ranked by fundamentals + trend
       return [...candidates]
         .filter(c => (c.weightedScore?.swing ?? 0) >= 35)
-        .sort((a, b) => (b.weightedScore?.swing ?? 0) - (a.weightedScore?.swing ?? 0))
-        .slice(0, 15);
+        .sort((a, b) => (b.weightedScore?.swing ?? 0) - (a.weightedScore?.swing ?? 0));
     } else {
-      // Intraday tab: stocks with good technical entry, ranked by timing quality
       return [...candidates]
         .filter(c => (c.weightedScore?.intraday ?? 0) >= 25)
-        .sort((a, b) => (b.weightedScore?.intraday ?? 0) - (a.weightedScore?.intraday ?? 0))
-        .slice(0, 15);
+        .sort((a, b) => (b.weightedScore?.intraday ?? 0) - (a.weightedScore?.intraday ?? 0));
     }
   }, [candidates, scoutTab]);
 
@@ -198,44 +194,42 @@ export default function ScoutScreen() {
           if (!isMounted.current) return;
           const ws = result.weightedScore;
           const best = Math.max(ws.swing, ws.intraday);
-          passed.push({
-            ticker:    s.ticker,
-            name:      s.name,
-            exchange:  'NSE',
-            price:     detail.price,
-            currency:  '₹',
-            change:    detail.changePercent,
-            sector:    s.sector,
-            indicator: {
-              label: 'GRAHAM',
-              value: `${best}/100`,
-              tone:  best >= 70 ? 'accent' : best >= 45 ? 'sepia' : 'muted',
-            },
-            verdict:       result.verdict,
-            score:         result.score,
-            signals:       result.signals,
-            breakdown:     result.breakdown,
-            expectedDays:  result.expectedDays ?? undefined,
-            weightedScore: ws,
-            scanSource:    'phone',
-          });
-          const blend = (c: ScoutCandidate) =>
-            (c.weightedScore?.swing ?? 0) * 0.35 + (c.weightedScore?.intraday ?? 0) * 0.65;
-          const top25 = [...passed].sort((a, b) => blend(b) - blend(a)).slice(0, 25);
-          if (isMounted.current) setCandidates(top25);
+          // Only keep stocks that score something meaningful on at least one dimension
+          if (ws.swing >= 15 || ws.intraday >= 15) {
+            passed.push({
+              ticker:    s.ticker,
+              name:      s.name,
+              exchange:  'NSE',
+              price:     detail.price,
+              currency:  '₹',
+              change:    detail.changePercent,
+              sector:    s.sector,
+              indicator: {
+                label: 'GRAHAM',
+                value: `${best}/100`,
+                tone:  best >= 70 ? 'accent' : best >= 45 ? 'sepia' : 'muted',
+              },
+              verdict:       result.verdict,
+              score:         result.score,
+              signals:       result.signals,
+              breakdown:     result.breakdown,
+              expectedDays:  result.expectedDays ?? undefined,
+              weightedScore: ws,
+              scanSource:    'phone',
+            });
+            // Stream intermediate results as they arrive — no cap, tabs filter later
+            if (isMounted.current) setCandidates([...passed]);
+          }
         } catch { /* skip failed ticker */ }
       }
     };
     await Promise.all(Array.from({ length: 8 }, worker));
 
     if (!isMounted.current) return;
-    const blendFinal = (c: ScoutCandidate) =>
-      (c.weightedScore?.swing ?? 0) * 0.35 + (c.weightedScore?.intraday ?? 0) * 0.65;
-    const top15Final = [...passed].sort((a, b) => blendFinal(b) - blendFinal(a)).slice(0, 25);
 
-    if (isMounted.current) setCandidates(top15Final);
+    if (isMounted.current) setCandidates([...passed]);
     const now = Date.now();
-    saveCandidatesCache(JSON.stringify(top15Final)).catch(() => {});
+    saveCandidatesCache(JSON.stringify(passed)).catch(() => {});
     setCachedAt(now);
     saveFirebaseScan(top15Final).catch(() => {});
   }, [loadFromCache, showToast]);
