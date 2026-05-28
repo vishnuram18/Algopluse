@@ -124,8 +124,37 @@ function findNearestSupport(bars: OHLCBar[], price: number): number | null {
 }
 
 // ── Swing Score (0–100) ───────────────────────────────────────────────────────
-// Technical multi-day swing-trade setup: uptrend + healthy RSI + expanding volume.
-// Uses only chart data so it works even when the fundamentals API fails.
+// Technical base (always works) + Graham fundamental bonus (when API succeeds).
+
+function grahamBonus(f: GrahamFundamentals, price: number): number {
+  let bonus = 0;
+  // P/E — India-appropriate bands (max 10)
+  if (f.pe > 0) {
+    if (f.pe <= 15)      bonus += 10;
+    else if (f.pe <= 25) bonus += 7;
+    else if (f.pe <= 35) bonus += 4;
+    else if (f.pe <= 50) bonus += 1;
+  }
+  // P/B (max 8)
+  if (f.pb > 0) {
+    if (f.pb <= 1.5)    bonus += 8;
+    else if (f.pb <= 3) bonus += 5;
+    else if (f.pb <= 5) bonus += 2;
+  }
+  // Graham Number — bonus for trading below or near intrinsic value (max 5)
+  if (f.grahamNumber > 0) {
+    const ratio = price / f.grahamNumber;
+    if (ratio < 0.75)      bonus += 5;
+    else if (ratio < 1.00) bonus += 3;
+    else if (ratio < 1.25) bonus += 1;
+  }
+  // Low debt (max 4)
+  if (f.debtToEquity > 0 && f.debtToEquity <= 0.5) bonus += 4;
+  else if (f.debtToEquity > 0 && f.debtToEquity <= 1.0) bonus += 2;
+  // Positive EPS (max 3)
+  if (f.eps > 0) bonus += 3;
+  return bonus; // max 30, but capped below at 100
+}
 
 function swingScore(
   closes:  number[],
@@ -136,34 +165,35 @@ function swingScore(
   ema20:   number | null,
   ema50:   number | null,
   sma200:  number | null,
+  gf:      GrahamFundamentals,
 ): number {
   let score = 0;
 
   // EMA trend stack (max 35) — swing trades need a confirmed uptrend
   if (price > 0) {
-    const aboveEma20  = ema20  !== null && price  > ema20;
-    const ema20AboveEma50  = ema20  !== null && ema50  !== null && ema20  > ema50;
-    const ema50AboveSma200 = ema50  !== null && sma200 !== null && ema50  > sma200;
-    if (aboveEma20 && ema20AboveEma50 && ema50AboveSma200) score += 35; // full bull stack
+    const aboveEma20       = ema20  !== null && price > ema20;
+    const ema20AboveEma50  = ema20  !== null && ema50  !== null && ema20 > ema50;
+    const ema50AboveSma200 = ema50  !== null && sma200 !== null && ema50 > sma200;
+    if (aboveEma20 && ema20AboveEma50 && ema50AboveSma200) score += 35;
     else if (aboveEma20 && ema20AboveEma50)                score += 22;
     else if (ema50 !== null && price > ema50)              score += 12;
     else if (sma200 !== null && price > sma200)            score += 5;
   }
 
-  // RSI zone (max 25) — swing wants 45–65: trending up, not overbought
+  // RSI zone (max 25) — swing wants 45–65: uptrending, not overbought
   if (rsi !== null) {
-    if (rsi >= 45 && rsi <= 65)      score += 25;
-    else if (rsi >= 35 && rsi < 45)  score += 14; // recovering
-    else if (rsi > 65 && rsi <= 75)  score += 8;  // strong but watch
+    if (rsi >= 45 && rsi <= 65)     score += 25;
+    else if (rsi >= 35 && rsi < 45) score += 14;
+    else if (rsi > 65 && rsi <= 75) score += 8;
   }
 
-  // MACD momentum (max 25) — bullish crossover confirms swing direction
+  // MACD momentum (max 25)
   if (macd !== null) {
     if (macd.histogram > 0 && macd.macdLine > 0) score += 25;
     else if (macd.histogram > 0)                  score += 12;
   }
 
-  // 5-day volume vs 20-day average (max 15) — expanding volume = conviction
+  // 5-day volume vs 20-day average (max 15)
   if (volumes.length >= 21) {
     const avg5  = volumes.slice(-5).reduce((a, b) => a + b, 0) / 5;
     const avg20 = volumes.slice(-21, -1).reduce((a, b) => a + b, 0) / 20;
@@ -173,6 +203,9 @@ function swingScore(
       else if (ratio > 1.0) score += 8;
     }
   }
+
+  // Graham bonus — added on top when fundamentals loaded successfully
+  score += grahamBonus(gf, price);
 
   return Math.min(score, 100);
 }
@@ -358,7 +391,7 @@ export async function analyseGrahamStock(
   const macd   = calcMacd(closes);
   const atr    = calcATR(bars);
 
-  const gScore = swingScore(closes, volumes, currentPrice, rsi, macd, ema20, ema50, sma200);
+  const gScore = swingScore(closes, volumes, currentPrice, rsi, macd, ema20, ema50, sma200, gf);
   const tScore = grahamTimingScore(rsi, macd, volumes, bars, currentPrice, ema50, sma200, closes);
 
   const marginOfSafety = gf.grahamNumber > 0
