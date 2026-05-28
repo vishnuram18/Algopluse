@@ -123,51 +123,56 @@ function findNearestSupport(bars: OHLCBar[], price: number): number | null {
   );
 }
 
-// ── Graham Value Score (0–100) ────────────────────────────────────────────────
-// Measures how well the stock meets Graham's defensive and enterprising criteria.
+// ── Swing Score (0–100) ───────────────────────────────────────────────────────
+// Technical multi-day swing-trade setup: uptrend + healthy RSI + expanding volume.
+// Uses only chart data so it works even when the fundamentals API fails.
 
-function grahamValueScore(f: GrahamFundamentals, price: number): number {
+function swingScore(
+  closes:  number[],
+  volumes: number[],
+  price:   number,
+  rsi:     number | null,
+  macd:    MacdResult | null,
+  ema20:   number | null,
+  ema50:   number | null,
+  sma200:  number | null,
+): number {
   let score = 0;
 
-  // P/E ratio (max 25) — India large-caps typically trade at 20–50×
-  if (f.pe > 0) {
-    if (f.pe <= 15)      score += 25;
-    else if (f.pe <= 25) score += 18;
-    else if (f.pe <= 35) score += 10;
-    else if (f.pe <= 50) score += 4;
+  // EMA trend stack (max 35) — swing trades need a confirmed uptrend
+  if (price > 0) {
+    const aboveEma20  = ema20  !== null && price  > ema20;
+    const ema20AboveEma50  = ema20  !== null && ema50  !== null && ema20  > ema50;
+    const ema50AboveSma200 = ema50  !== null && sma200 !== null && ema50  > sma200;
+    if (aboveEma20 && ema20AboveEma50 && ema50AboveSma200) score += 35; // full bull stack
+    else if (aboveEma20 && ema20AboveEma50)                score += 22;
+    else if (ema50 !== null && price > ema50)              score += 12;
+    else if (sma200 !== null && price > sma200)            score += 5;
   }
 
-  // P/B ratio (max 20) — book value quality
-  if (f.pb > 0) {
-    if (f.pb <= 1.5)     score += 20;
-    else if (f.pb <= 3)  score += 14;
-    else if (f.pb <= 5)  score += 7;
-    else if (f.pb <= 8)  score += 2;
+  // RSI zone (max 25) — swing wants 45–65: trending up, not overbought
+  if (rsi !== null) {
+    if (rsi >= 45 && rsi <= 65)      score += 25;
+    else if (rsi >= 35 && rsi < 45)  score += 14; // recovering
+    else if (rsi > 65 && rsi <= 75)  score += 8;  // strong but watch
   }
 
-  // Graham Number margin of safety (max 15) — bonus for deep value
-  if (f.grahamNumber > 0) {
-    const ratio = price / f.grahamNumber;
-    if (ratio < 0.75)      score += 15;
-    else if (ratio < 1.00) score += 8;
-    else if (ratio < 1.25) score += 3;
+  // MACD momentum (max 25) — bullish crossover confirms swing direction
+  if (macd !== null) {
+    if (macd.histogram > 0 && macd.macdLine > 0) score += 25;
+    else if (macd.histogram > 0)                  score += 12;
   }
 
-  // Current Ratio (max 15) — lowered bar for Indian companies
-  if (f.currentRatio >= 2.0)      score += 15;
-  else if (f.currentRatio >= 1.5) score += 10;
-  else if (f.currentRatio >= 1.0) score += 5;
-
-  // Debt safety (max 15)
-  if (f.debtToEquity > 0 && f.debtToEquity <= 0.5)  score += 15; // low debt
-  else if (f.debtToEquity <= 1.0)                    score += 10;
-  else if (f.debtToEquity <= 2.0)                    score += 4;
-  else if (f.debtToEquity === 0)                     score += 15; // genuinely debt-free
-
-  // Earnings quality (max 10)
-  if (f.eps > 0)          score += 5;
-  if (f.revenue > 0)      score += 3;
-  if (f.dividendRate > 0) score += 2;
+  // 5-day volume vs 20-day average (max 15) — expanding volume = conviction
+  if (volumes.length >= 21) {
+    const avg5  = volumes.slice(-5).reduce((a, b) => a + b, 0) / 5;
+    const avg20 = volumes.slice(-21, -1).reduce((a, b) => a + b, 0) / 20;
+    if (avg20 > 0) {
+      const ratio = avg5 / avg20;
+      if (ratio > 1.4)      score += 15;
+      else if (ratio > 1.0) score += 8;
+    }
+  }
 
   return Math.min(score, 100);
 }
@@ -316,19 +321,19 @@ async function getGrahamVerdict(
   }
 }
 
-function fallbackVerdict(grahamScore: number, timingScore: number): Verdict {
-  const combined = grahamScore * 0.65 + timingScore * 0.35;
-  if (combined >= 65) return {
+function fallbackVerdict(swingScore: number, timingScore: number): Verdict {
+  const combined = swingScore * 0.5 + timingScore * 0.5;
+  if (combined >= 60) return {
     status: 'APPROVED', tone: 'approved',
-    body: `Value ${grahamScore}/100 · Entry ${timingScore}/100 — Strong Graham value with good entry timing.`,
+    body: `Swing ${swingScore}/100 · Entry ${timingScore}/100 — Strong uptrend with good entry timing.`,
   };
-  if (combined >= 40) return {
+  if (combined >= 35) return {
     status: 'WATCH', tone: 'watch',
-    body: `Value ${grahamScore}/100 · Entry ${timingScore}/100 — Value criteria met; await a better entry point.`,
+    body: `Swing ${swingScore}/100 · Entry ${timingScore}/100 — Setup developing; await confirmation.`,
   };
   return {
     status: 'DECLINED', tone: 'declined',
-    body: `Value ${grahamScore}/100 · Entry ${timingScore}/100 — Below Graham screening threshold.`,
+    body: `Swing ${swingScore}/100 · Entry ${timingScore}/100 — No clear swing setup at this time.`,
   };
 }
 
@@ -353,7 +358,7 @@ export async function analyseGrahamStock(
   const macd   = calcMacd(closes);
   const atr    = calcATR(bars);
 
-  const gScore = grahamValueScore(gf, currentPrice);
+  const gScore = swingScore(closes, volumes, currentPrice, rsi, macd, ema20, ema50, sma200);
   const tScore = grahamTimingScore(rsi, macd, volumes, bars, currentPrice, ema50, sma200, closes);
 
   const marginOfSafety = gf.grahamNumber > 0
