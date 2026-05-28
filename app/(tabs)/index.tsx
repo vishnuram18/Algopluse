@@ -96,16 +96,23 @@ export default function ScoutScreen() {
   }, [setSelectedStock]);
 
   const displayCandidates = useMemo(() => {
-    const key = scoutTab === 'momentum' ? 'swing' : 'intraday';
-    return [...candidates].sort((a, b) => {
-      const sa = a.weightedScore?.[key] ?? 0;
-      const sb = b.weightedScore?.[key] ?? 0;
-      return sb - sa;
-    });
+    if (scoutTab === 'momentum') {
+      // Swing tab: stocks with meaningful value score, ranked by fundamentals + trend
+      return [...candidates]
+        .filter(c => (c.weightedScore?.swing ?? 0) >= 35)
+        .sort((a, b) => (b.weightedScore?.swing ?? 0) - (a.weightedScore?.swing ?? 0))
+        .slice(0, 15);
+    } else {
+      // Intraday tab: stocks with good technical entry, ranked by timing quality
+      return [...candidates]
+        .filter(c => (c.weightedScore?.intraday ?? 0) >= 25)
+        .sort((a, b) => (b.weightedScore?.intraday ?? 0) - (a.weightedScore?.intraday ?? 0))
+        .slice(0, 15);
+    }
   }, [candidates, scoutTab]);
 
   // ── Qualified counts for segmented control ────────────────────────────────
-  const swingCleared    = useMemo(() => candidates.filter(c => (c.weightedScore?.swing    ?? 0) >= 50).length, [candidates]);
+  const swingCleared    = useMemo(() => candidates.filter(c => (c.weightedScore?.swing    ?? 0) >= 35).length, [candidates]);
   const intradayCleared = useMemo(() => candidates.filter(c => (c.weightedScore?.intraday ?? 0) >= 25).length, [candidates]);
   const approved        = useMemo(() => candidates.filter(c => c.verdict.status === 'APPROVED').length, [candidates]);
 
@@ -214,8 +221,8 @@ export default function ScoutScreen() {
           });
           const blend = (c: ScoutCandidate) =>
             (c.weightedScore?.swing ?? 0) * 0.35 + (c.weightedScore?.intraday ?? 0) * 0.65;
-          const top15 = [...passed].sort((a, b) => blend(b) - blend(a)).slice(0, 15);
-          if (isMounted.current) setCandidates(top15);
+          const top25 = [...passed].sort((a, b) => blend(b) - blend(a)).slice(0, 25);
+          if (isMounted.current) setCandidates(top25);
         } catch { /* skip failed ticker */ }
       }
     };
@@ -224,7 +231,7 @@ export default function ScoutScreen() {
     if (!isMounted.current) return;
     const blendFinal = (c: ScoutCandidate) =>
       (c.weightedScore?.swing ?? 0) * 0.35 + (c.weightedScore?.intraday ?? 0) * 0.65;
-    const top15Final = [...passed].sort((a, b) => blendFinal(b) - blendFinal(a)).slice(0, 15);
+    const top15Final = [...passed].sort((a, b) => blendFinal(b) - blendFinal(a)).slice(0, 25);
 
     if (isMounted.current) setCandidates(top15Final);
     const now = Date.now();
